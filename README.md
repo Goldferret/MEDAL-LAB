@@ -1,0 +1,237 @@
+# MADSCI-LAB
+
+**Autonomous laboratory framework for orchestrating robots, AI agents, and resources through intelligent workflows with comprehensive tracking and experimental coordination.**
+
+MADSCI-LAB is a practical implementation of the MADSci framework designed for autonomous scientific experimentation using physical robotics hardware. This repository provides a complete working example of autonomous laboratory automation with DOFBOT Pro robotic arms, integrated camera systems, and intelligent workflow orchestration.
+
+## 🤖 Hardware Requirements
+
+- **DOFBOT Pro** robotic arm
+- **Orbbec DaiBai DCW2** camera (or compatible Orbbec camera)
+- **NVIDIA Jetson Orin Nano** (for robot node execution)
+- **Host computer** (for workcell manager and client operations)
+
+## 📋 Prerequisites
+
+This repository works alongside the main MADSci framework in a distributed architecture:
+
+- **MADSci Framework**: The main framework components run as Docker containers
+- **Python 3.10**: Required for the robot node environment on Jetson
+- **Docker**: Required for workcell manager and client operations
+
+## 🏗️ Repository Structure
+
+```
+MADSCI-LAB/
+├── .env.example                       # Example environment configuration
+├── ARCHITECTURE.md                    # Core framework architecture design
+├── captures/                          # Camera calibration and data capture
+│   └── example_camera_calibration.json    # Example calibration parameters
+├── workflows/                         # Workflow examples and scripts
+│   ├── recording_workflow.py             # Data collection with synchronized recording
+│   ├── transfer.py                       # Basic robot transfer operations
+│   ├── camera_calibration.py             # Camera calibration workflow
+│   └── validate_calibration.py           # Calibration validation workflow
+├── managers/                          # Workcell configuration
+│   └── example_wc.workcell.yaml          # Example workcell setup
+└── nodes/                            # Robot nodes and hardware control
+    ├── dofbot_expert_node.py             # Main DOFBOT Pro node with camera integration
+    ├── Arm_Lib.py                        # Low-level arm control library
+    ├── angle_finder.py                   # Servo position utility
+    └── default.node.yaml                 # Default node configuration
+```
+
+## 🚀 Quick Start
+
+### 0. Environment Configuration
+
+First, set up your network configuration:
+
+```bash
+# Copy the example environment file
+cp .env.example .env
+
+# Edit .env with your actual IP addresses
+# WORKCELL_MANAGER_URL=http://YOUR_WORKCELL_MANAGER_IP:8005
+# ROBOT_NODE_URL=http://YOUR_JETSON_IP:2000
+```
+
+## 🔧 Component Setup
+
+MADSCI-LAB uses a distributed architecture with three main components running on separate devices:
+
+### 1. 🤖 Robot Node (NVIDIA Jetson Orin Nano)
+
+The robot node runs directly on the Jetson hardware and controls the DOFBOT Pro arm and camera.
+
+**Dependencies:**
+- Python 3.10 virtual environment
+- MADSci framework (`pip install madsci`)
+- OpenCV (`pip install opencv-python`)
+- NumPy (`pip install numpy`)
+- pyorbbecsdk-1.3.1 (install from source)
+- {TODO: Additional dependencies}
+
+**Setup:**
+```bash
+# Create and activate virtual environment
+python3.10 -m venv madsci_env
+source madsci_env/bin/activate
+
+# Install core dependencies
+pip install madsci opencv-python numpy
+
+# Install pyorbbecsdk-1.3.1 from source
+# Follow Orbbec SDK installation instructions
+# IMPORTANT: Export PYTHONPATH inside pyorbbecsdk-1.3.1 directory
+cd /path/to/pyorbbecsdk-1.3.1
+export PYTHONPATH=$PYTHONPATH:$(pwd)/install/lib/
+```
+
+**Start the robot node:**
+```bash
+# From the pyorbbecsdk directory with PYTHONPATH set
+python /path/to/madsci-lab/nodes/dofbot_expert_node.py \
+  --definition /path/to/madsci-lab/nodes/default.node.yaml \
+  --node_url "${ROBOT_NODE_URL}"
+```
+
+### 2. 🏭 Workcell Manager (Host Computer)
+
+The workcell manager orchestrates workflows and manages the laboratory resources using Docker containers.
+
+**Dependencies:**
+- Docker and Docker Compose
+- {TODO: Additional dependencies}
+
+**Setup:**
+```bash
+# Start workcell manager with all required services
+# (Script coming soon - will start workcell manager, resource manager, 
+#  event manager, Redis, and MongoDB containers)
+./start_workcell.sh managers/example_wc.workcell.yaml
+```
+
+**View logs:**
+```bash
+# View workcell manager logs
+docker logs -f workcell_manager
+```
+
+### 3. 💻 Workcell Client (Development Machine)
+
+The workcell client submits and monitors workflows using the official MADSci Docker image.
+
+**Dependencies:**
+- Docker
+- Network access to workcell manager
+
+**Setup:**
+```bash
+# Start interactive MADSci container with workflows mounted
+docker run -it --network host \
+  -v $(pwd)/workflows:/app/workflows \
+  -w /app \
+  ghcr.io/ad-sdl/madsci:latest bash
+
+# Inside container, run workflows
+python workflows/transfer.py
+python workflows/recording_workflow.py
+```
+
+## 📖 Workflow Examples
+
+### Basic Transfer Operation
+```python
+# workflows/transfer.py
+# Demonstrates simple robot transfer between positions
+```
+
+### Data Collection with Recording
+```python
+# workflows/recording_workflow.py  
+# Synchronized camera recording during robot operations for training data collection
+```
+
+### Camera Calibration
+```python
+# workflows/camera_calibration.py
+# Automated camera calibration workflow
+```
+
+## 🔧 Configuration
+
+### Environment Variables
+- Copy `.env.example` to `.env` and update with your network configuration
+- `WORKCELL_MANAGER_URL` - IP address and port of your workcell manager host
+- `ROBOT_NODE_URL` - IP address and port of your Jetson Orin Nano
+
+### Node Configuration
+- `nodes/default.node.yaml` - Default node settings
+- `nodes/angle_finder.py` - Utility for manual position setup
+
+### Workcell Configuration  
+- `managers/example_wc.workcell.yaml` - Workcell setup with nodes and locations
+
+### Camera Calibration
+- `captures/example_camera_calibration.json` - Example calibration parameters
+
+## 🌐 Network Architecture
+
+```
+┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────────┐
+│   Workcell Client   │    │  Workcell Manager   │    │    Robot Node       │
+│  (Development PC)   │    │   (Host Computer)   │    │  (Jetson Orin Nano) │
+│                     │    │                     │    │                     │
+│ • Docker Container  │◄──►│ • Docker Compose    │◄──►│ • Python 3.10       │
+│ • MADSci Image      │    │ • Workcell Manager  │    │ • DOFBOT Pro        │
+│ • Workflow Scripts  │    │ • Resource Manager  │    │ • Orbbec Camera     │
+│                     │    │ • Event Manager     │    │ • pyorbbecsdk       │
+│                     │    │ • Redis + MongoDB   │    │                     │
+└─────────────────────┘    └─────────────────────┘    └─────────────────────┘
+```
+
+## 📚 Documentation
+
+- **[Architecture Design](ARCHITECTURE.md)** - Complete framework architecture with hybrid digital twin design
+- **[MADSci Framework](https://github.com/AD-SDL/MADSci)** - Main framework repository
+
+## 🔬 Current Features
+
+- **Autonomous Robot Control**: DOFBOT Pro integration with precise servo control
+- **Camera Integration**: Orbbec camera support with calibration workflows  
+- **Workflow Orchestration**: MADSci-based workflow management and execution
+- **Data Collection**: Synchronized recording for AI training data generation
+- **Resource Management**: Comprehensive tracking of laboratory assets and states
+- **Event Logging**: Complete experimental traceability and debugging support
+
+## 🚧 Development Status
+
+This repository represents an active implementation of the MADSci framework architecture. While core functionality is operational, development is ongoing to implement the complete feature set described in the architecture documentation.
+
+**Currently Implemented:**
+- Basic robot control and workflows
+- Camera integration and calibration
+- Data collection workflows
+- MADSci framework integration
+
+**In Development:**
+- Complete hybrid digital twin implementation
+- Advanced multi-robot coordination
+- Enhanced AI agent integration
+- Comprehensive resource management features
+
+## 🤝 Contributing
+
+This project is under active development. The architecture design in `ARCHITECTURE.md` provides the roadmap for full implementation.
+
+## 📄 License
+
+[Add your license information here]
+
+## 🆘 Support
+
+For issues related to:
+- **MADSci Framework**: See the main MADSci repository
+- **Hardware Setup**: Check the component setup sections above
+- **Architecture Questions**: Review `ARCHITECTURE.md`

@@ -1,0 +1,7 @@
+node_name: RobotArmNode
+node_id: 01JYN7FHC1V5BH2KT852A6BX2J
+node_description: null
+node_type: device
+module_name: RobotArmNode
+module_version: 0.0.1
+capabilities: null
