@@ -1,8 +1,8 @@
-# MADSCI-LAB
+# MEDAL-LAB
 
 **Autonomous laboratory framework for orchestrating robots, AI agents, and resources through intelligent workflows with comprehensive tracking and experimental coordination.**
 
-MADSCI-LAB is a practical implementation of the MADSci framework designed for autonomous scientific experimentation using physical robotics hardware. This repository provides a complete working example of autonomous laboratory automation with DOFBOT Pro robotic arms, integrated camera systems, and intelligent workflow orchestration.
+MEDAL-LAB is a practical implementation of the MADSci framework designed for autonomous scientific experimentation using physical robotics hardware. This repository provides a complete working example of autonomous laboratory automation with DOFBOT Pro robotic arms, integrated camera systems, and intelligent workflow orchestration.
 
 ## 🤖 Hardware Requirements
 
@@ -22,7 +22,7 @@ This repository works alongside the main MADSci framework in a distributed archi
 ## 🏗️ Repository Structure
 
 ```
-MADSCI-LAB/
+MEDAL-LAB/
 ├── .env.example                       # Example environment configuration
 ├── ARCHITECTURE.md                    # Core framework architecture design
 ├── captures/                          # Camera calibration and data capture
@@ -63,7 +63,7 @@ cp .env.example .env
 
 ## 🔧 Component Setup
 
-MADSCI-LAB uses a distributed architecture with three main components running on separate devices:
+MEDAL-LAB uses a distributed architecture with three main components running on separate devices:
 
 ### 1. 🤖 Robot Node (NVIDIA Jetson Orin Nano)
 
@@ -116,7 +116,7 @@ export PYTHONPATH=$PYTHONPATH:$(pwd)/install/lib/
 sudo bash ./scripts/install_udev_rules.sh
 sudo udevadm control --reload-rules && sudo udevadm trigger
 
-# 6. You can now cd back to your MADSCI-LAB repository and run the robot node
+# 6. You can now cd back to your MEDAL-LAB repository and run the robot node
 # The PYTHONPATH export allows pyorbbecsdk to be imported from anywhere
 ```
 
@@ -124,7 +124,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ```bash
 # From the pyorbbecsdk directory with PYTHONPATH set
 # Set NODE_DEFINITION and ROBOT_NODE_URL in your .env file, then:
-python /path/to/madsci-lab/nodes/dofbot_expert_node.py
+python /path/to/medal-lab/nodes/dofbot_expert_node.py
 ```
 
 ### 2. 🏭 Workcell Manager (Host Computer)
@@ -241,7 +241,7 @@ python workflows/validate_calibration.py
 │                     │    │                     │    │                     │
 │ • Docker Container  │◄──►│ • Docker Compose    │◄──►│ • Python 3.10       │
 │ • MADSci Image      │    │ • Workcell Manager  │    │ • DOFBOT Pro        │
-│ • Workflow Scripts  │    │ • Resource Manager  │    │ • Orbbec Camera     │
+│ • Workflow Scripts   │    │ • Resource Manager  │    │ • Orbbec Camera     │
 │                     │    │ • Event Manager     │    │ • pyorbbecsdk       │
 │                     │    │ • Redis + MongoDB   │    │                     │
 └─────────────────────┘    └─────────────────────┘    └─────────────────────┘
