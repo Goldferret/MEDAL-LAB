@@ -55,6 +55,11 @@ captures/*.png
 captures/*.mp4
 captures/*.avi
 
+# Tools test outputs
+tools/camera_test_output/
+tools/test_*.jpg
+tools/test_*.png
+
 # Temporary files
 *.tmp
 *.temp

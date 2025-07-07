@@ -34,26 +34,31 @@ MADSCI-LAB/
 │   └── validate_calibration.py           # Calibration validation workflow
 ├── managers/                          # Workcell configuration
 │   └── example_wc.workcell.yaml          # Example workcell setup
-└── nodes/                            # Robot nodes and hardware control
-    ├── dofbot_expert_node.py             # Main DOFBOT Pro node with camera integration
-    ├── Arm_Lib.py                        # Low-level arm control library
-    ├── angle_finder.py                   # Servo position utility
-    └── default.node.yaml                 # Default node configuration
+├── nodes/                            # Robot nodes and hardware control
+│   ├── dofbot_expert_node.py             # Main DOFBOT Pro node with camera integration
+│   ├── Arm_Lib.py                        # Low-level arm control library
+│   ├── angle_finder.py                   # Servo position utility
+│   └── default.node.yaml                 # Default node configuration
+└── tools/                            # Hardware testing and diagnostic tools
+    ├── diagnose_orbbec_device.py         # Orbbec camera diagnostic script
+    ├── fix_orbbec_device.sh              # Automated Orbbec device fix script
+    └── test_cameras_final.py             # Comprehensive camera testing script
 ```
 
 ## 🚀 Quick Start
 
 ### 0. Environment Configuration
 
-First, set up your network configuration:
+First, set up your network and path configuration:
 
 ```bash
 # Copy the example environment file
 cp .env.example .env
 
-# Edit .env with your actual IP addresses
+# Edit .env with your actual configuration
 # WORKCELL_MANAGER_URL=http://YOUR_WORKCELL_MANAGER_IP:8005
 # ROBOT_NODE_URL=http://YOUR_JETSON_IP:2000
+# MADSCI_PATH=/path/to/your/MADSci/repository
 ```
 
 ## 🔧 Component Setup
@@ -65,12 +70,17 @@ MADSCI-LAB uses a distributed architecture with three main components running on
 The robot node runs directly on the Jetson hardware and controls the DOFBOT Pro arm and camera.
 
 **Dependencies:**
-- Python 3.10 virtual environment
+- Python 3.10 virtual environment (required for Jetson compatibility)
 - MADSci framework (`pip install madsci`)
 - OpenCV (`pip install opencv-python`)
 - NumPy (`pip install numpy`)
+- smbus2 (`pip install smbus2`) - for I2C servo communication
+- python-dotenv (`pip install python-dotenv`) - for .env file support
 - pyorbbecsdk-1.3.1 (install from source)
-- {TODO: Additional dependencies}
+- Additional dependencies automatically installed with MADSci:
+  - Pydantic (for data validation)
+  - FastAPI (for REST API functionality)
+  - Other MADSci framework dependencies
 
 **Setup:**
 ```bash
@@ -79,21 +89,42 @@ python3.10 -m venv madsci_env
 source madsci_env/bin/activate
 
 # Install core dependencies
-pip install madsci opencv-python numpy
+pip install madsci opencv-python numpy smbus2 python-dotenv
 
 # Install pyorbbecsdk-1.3.1 from source
-# Follow Orbbec SDK installation instructions
-# IMPORTANT: Export PYTHONPATH inside pyorbbecsdk-1.3.1 directory
-cd /path/to/pyorbbecsdk-1.3.1
+# 1. Download source code from GitHub releases
+wget https://github.com/orbbec/pyorbbecsdk/archive/refs/tags/v1.3.1.tar.gz
+tar -xzf v1.3.1.tar.gz
+cd pyorbbecsdk-1.3.1
+
+# 2. Install build dependencies
+pip install -r requirements.txt
+
+# 3. Build the SDK
+mkdir build
+cd build
+cmake -Dpybind11_DIR=`pybind11-config --cmakedir` ..
+make -j4
+make install
+
+# 4. IMPORTANT: After building, export PYTHONPATH to include the install directory
 export PYTHONPATH=$PYTHONPATH:$(pwd)/install/lib/
+
+# 5. Install udev rules for camera device access
+cd ../
+export PYTHONPATH=$PYTHONPATH:$(pwd)/install/lib/
+sudo bash ./scripts/install_udev_rules.sh
+sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# 6. You can now cd back to your MADSCI-LAB repository and run the robot node
+# The PYTHONPATH export allows pyorbbecsdk to be imported from anywhere
 ```
 
 **Start the robot node:**
 ```bash
 # From the pyorbbecsdk directory with PYTHONPATH set
-python /path/to/madsci-lab/nodes/dofbot_expert_node.py \
-  --definition /path/to/madsci-lab/nodes/default.node.yaml \
-  --node_url "${ROBOT_NODE_URL}"
+# Set NODE_DEFINITION and ROBOT_NODE_URL in your .env file, then:
+python /path/to/madsci-lab/nodes/dofbot_expert_node.py
 ```
 
 ### 2. 🏭 Workcell Manager (Host Computer)
@@ -101,16 +132,37 @@ python /path/to/madsci-lab/nodes/dofbot_expert_node.py \
 The workcell manager orchestrates workflows and manages the laboratory resources using Docker containers.
 
 **Dependencies:**
-- Docker and Docker Compose
-- {TODO: Additional dependencies}
+- Docker (>= 20.10) and Docker Compose (>= 2.0)
+- Bash shell
+- MADSci repository cloned locally
+- MADSci Docker images (automatically pulled):
+  - `ghcr.io/ad-sdl/madsci:latest`
+  - `ghcr.io/ad-sdl/madsci_dashboard:latest`
+- Database containers (automatically managed):
+  - MongoDB 8.0
+  - Redis 7.4
+  - PostgreSQL 17
+  - MinIO (object storage)
 
 **Setup:**
 ```bash
 # Start workcell manager with all required services
-# (Script coming soon - will start workcell manager, resource manager, 
-#  event manager, Redis, and MongoDB containers)
-./start_workcell.sh managers/example_wc.workcell.yaml
+./managers/start_workcell.sh
 ```
+
+**Setup:**
+```bash
+# Start workcell manager with all required services
+./managers/start_workcell.sh
+```
+
+**Automatic Configuration:**
+The `start_workcell.sh` script automatically configures the workcell definition with IP addresses from your `.env` file:
+- Extracts the host and port from `WORKCELL_MANAGER_URL` 
+- Uses `ROBOT_NODE_URL` for the robot node configuration
+- Creates a properly configured workcell definition file
+
+This eliminates the need to manually sync IP addresses between `.env` and the workcell YAML file.
 
 **View logs:**
 ```bash
@@ -128,15 +180,17 @@ The workcell client submits and monitors workflows using the official MADSci Doc
 
 **Setup:**
 ```bash
-# Start interactive MADSci container with workflows mounted
+# Start interactive MADSci container with entire repository mounted
 docker run -it --network host \
-  -v $(pwd)/workflows:/app/workflows \
-  -w /app \
+  -v $(pwd):/medal-lab \
+  -w /medal-lab \
   ghcr.io/ad-sdl/madsci:latest bash
 
 # Inside container, run workflows
 python workflows/transfer.py
 python workflows/recording_workflow.py
+python workflows/camera_calibration.py
+python workflows/validate_calibration.py
 ```
 
 ## 📖 Workflow Examples
@@ -165,6 +219,8 @@ python workflows/recording_workflow.py
 - Copy `.env.example` to `.env` and update with your network configuration
 - `WORKCELL_MANAGER_URL` - IP address and port of your workcell manager host
 - `ROBOT_NODE_URL` - IP address and port of your Jetson Orin Nano
+- `NODE_DEFINITION` - Path to your node definition YAML file
+- `MADSCI_PATH` - Path to your cloned MADSci repository
 
 ### Node Configuration
 - `nodes/default.node.yaml` - Default node settings
@@ -190,6 +246,32 @@ python workflows/recording_workflow.py
 │                     │    │ • Redis + MongoDB   │    │                     │
 └─────────────────────┘    └─────────────────────┘    └─────────────────────┘
 ```
+
+## 🛠️ Troubleshooting
+
+### Camera Issues
+If you encounter problems with the Orbbec DaiBai DCW2 camera:
+
+```bash
+# Run diagnostic script to identify issues
+python3 tools/diagnose_orbbec_device.py
+
+# Run automated fix script for common issues
+./tools/fix_orbbec_device.sh
+
+# Test camera functionality
+python3 tools/test_cameras_final.py
+```
+
+Common camera issues and solutions:
+- **"No device found"**: Check USB connection, run fix script for udev rules
+- **Permission denied**: Add user to video group, restart system
+- **Import errors**: Ensure pyorbbecsdk is installed with correct PYTHONPATH
+
+### Node Connection Issues
+- Verify `.env` file configuration matches your network setup
+- Check that robot node URL is accessible from workcell manager
+- Ensure no firewall blocking the configured ports
 
 ## 📚 Documentation
 

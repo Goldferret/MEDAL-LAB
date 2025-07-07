@@ -17,7 +17,7 @@ import cv2
 from typing import Dict, List, Optional, Any, Tuple
 
 from madsci.common.types.action_types import ActionFailed, ActionResult, ActionSucceeded
-from madsci.common.types.node_types import RestNodeConfig
+from madsci.common.types.node_types import RestNodeConfig, NodeDefinition
 from madsci.node_module.helpers import action
 from madsci.node_module.rest_node_module import RestNode
 from madsci.common.types.node_types import NodeStatus
@@ -49,12 +49,6 @@ class RobotArmConfig(RestNodeConfig):
     """Whether to enable Orbbec DaiBai DCW2 camera via SDK (requires pyorbbecsdk)."""
     record_frequency: float = 10.0
     """Frequency in Hz to record data during trajectory collection."""
-
-    node_url: AnyUrl = Field(
-        title="Node URL",
-        description="The URL used to communicate with the node. This is the base URL for the REST API.",
-        default=AnyUrl("http://192.168.40.246:2000"),
-    )
 
 class RobotArmInterface:
     """Interface for the DOFBOT Pro robot arm with expert trajectory collection."""
@@ -1113,7 +1107,9 @@ class RobotArmNode(RestNode):
 
     def shutdown_handler(self) -> None:
         """Handle the shutdown of the node."""
-        self.logger.log_info(f"Disconnecting from robot {self.config.device_number}...")
+        # Use safe attribute access like in startup_handler
+        device_number = getattr(self.config, 'device_number', 0)
+        self.logger.log_info(f"Disconnecting from robot {device_number}...")
         
         # Stop recording if active
         if self.robot_interface.recording:
@@ -1124,7 +1120,7 @@ class RobotArmNode(RestNode):
             self.robot_interface._cleanup_cameras()
             
         del self.robot_interface
-        self.logger.log_info(f"Disconnected from robot {self.config.device_number}")
+        self.logger.log_info(f"Disconnected from robot {device_number}")
 
     def state_handler(self) -> None:
         """This is where you can implement logic to periodically update the node's public-facing state information."""
@@ -1718,5 +1714,31 @@ class RobotArmNode(RestNode):
 
 
 if __name__ == "__main__":
-    robot_arm_node = RobotArmNode()
+    import os
+    from dotenv import load_dotenv
+    from pathlib import Path
+    
+    # Load environment variables from root directory
+    root_dir = Path(__file__).parent.parent
+    load_dotenv(root_dir / '.env')
+    
+    # Get configuration from environment
+    definition_path = Path(os.getenv("NODE_DEFINITION", "nodes/default.node.yaml"))
+    node_url = os.getenv("ROBOT_NODE_URL", "http://localhost:2000")
+    
+    # Load node definition
+    node_definition = None
+    if definition_path.exists():
+        node_definition = NodeDefinition.from_yaml(definition_path)
+    
+    # Create custom config with node_url
+    node_config = RobotArmConfig(node_url=node_url)
+    
+    # Initialize and start node
+    robot_arm_node = RobotArmNode(
+        node_definition=node_definition,
+        node_config=node_config
+    )
+    
+    print(f"Starting DOFBOT Pro Expert Node (definition: {definition_path}, url: {node_url})")
     robot_arm_node.start_node()

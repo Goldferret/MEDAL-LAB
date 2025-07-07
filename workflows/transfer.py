@@ -7,11 +7,13 @@ import time
 import os
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from root directory
+import pathlib
+root_dir = pathlib.Path(__file__).parent.parent
+load_dotenv(root_dir / '.env')
 
 workcell_client = WorkcellClient(
-  workcell_manager_url=os.getenv("WORKCELL_MANAGER_URL", "http://localhost:8005")
+  workcell_server_url=os.getenv("WORKCELL_MANAGER_URL", "http://localhost:8005")
 )
 wf_def = WorkflowDefinition(
   name="Test Workflow",
@@ -22,7 +24,7 @@ wf_def = WorkflowDefinition(
       action="transfer",
       args={
         "locations": [90, 90],
-        "movement_keys": ["angled_above", "angled_above", "horizontal"] # Apporach, Return, and Grab methods (in order)
+        "movement_keys": ["directly_above", "directly_above", "horizontal"] # Apporach, Return, and Grab methods (in order)
       }
     )
   ]

@@ -7,11 +7,13 @@ import time
 import os
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from root directory
+import pathlib
+root_dir = pathlib.Path(__file__).parent.parent
+load_dotenv(root_dir / '.env')
 
 workcell_client = WorkcellClient(
-    workcell_manager_url=os.getenv("WORKCELL_MANAGER_URL", "http://localhost:8005")
+    workcell_server_url=os.getenv("WORKCELL_MANAGER_URL", "http://localhost:8005")
 )
 
 # Calibration Validation workflow
