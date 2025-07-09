@@ -49,11 +49,12 @@ logs/
 
 # Camera captures (keep examples, ignore actual captures)
 captures/calibration_images/
-captures/trajectory_*/
-captures/*.jpg
-captures/*.png
+captures/experiment_*/
+captures/capture_*.jpg
+captures/capture_*.png
 captures/*.mp4
 captures/*.avi
+# Keep example_camera_calibration.json and other example files
 
 # Tools test outputs
 tools/camera_test_output/

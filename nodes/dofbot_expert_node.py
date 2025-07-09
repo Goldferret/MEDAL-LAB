@@ -1,11 +1,11 @@
 """A robot arm module for DOFBOT Pro robotic arm with expert trajectory collection.
 
-CAMERA PIPELINE MANAGEMENT:
-- Camera pipeline is configured during node startup but NOT started
-- Pipeline only starts when recording begins (start_recording action)
-- Pipeline stops when recording ends (stop_recording action)
-- This prevents continuous frame generation and buffer overflow warnings
-- Manual pipeline control available via start_camera_pipeline/stop_camera_pipeline actions
+CAMERA PIPELINE MANAGEMENT (ALWAYS-ON APPROACH):
+- Camera pipeline starts automatically during node initialization
+- Pipeline runs continuously using callback-based frame capture for optimal performance
+- High-performance frame queue provides near-instant image access (10Hz+ capable)
+- Pipeline only stops during node shutdown for maximum reliability and performance
+- No manual pipeline control needed - camera is always ready for capture
 """
 
 import time
@@ -15,6 +15,8 @@ import datetime
 import numpy as np
 import cv2
 from typing import Dict, List, Optional, Any, Tuple
+from queue import Queue, Empty
+import threading
 
 from madsci.common.types.action_types import ActionFailed, ActionResult, ActionSucceeded
 from madsci.common.types.node_types import RestNodeConfig, NodeDefinition
@@ -26,9 +28,19 @@ from Arm_Lib import Arm_Device
 
 # Orbbec DaiBai DCW2 camera support via pyorbbecsdk
 try:
-    from pyorbbecsdk import Pipeline, Config, OBSensorType, OBFormat, PointCloudFilter
+    from pyorbbecsdk import Pipeline, Config, OBSensorType, OBFormat, PointCloudFilter, FrameSet
+    import pyorbbecsdk as ob
     ORBBEC_SDK_AVAILABLE = True
     print("✓ pyorbbecsdk imported successfully")
+    
+    # Disable Orbbec SDK file logging to prevent Log directory creation
+    try:
+        # Set log level to OFF (5) to disable file logging
+        ob.set_logger_to_file(ob.OBLogLevel.OB_LOG_LEVEL_OFF, "")
+        print("✓ Disabled Orbbec SDK file logging")
+    except Exception as e:
+        print(f"⚠ Could not disable Orbbec SDK logging: {e}")
+        
 except ImportError:
     ORBBEC_SDK_AVAILABLE = False
     print("✗ pyorbbecsdk not available. Orbbec camera functionality will be disabled.")
@@ -39,7 +51,7 @@ class RobotArmConfig(RestNodeConfig):
 
     device_number: int = 0
     """The device number of the robot arm."""
-    data_collection_path: str = "./expert_trajectories"
+    data_collection_path: str = "./captures"
     """Path where expert trajectory data will be stored."""
     rgb_camera_index: int = 0
     """Index of the RGB camera device (video0 for Orbbec DaBai DCW2)."""
@@ -96,6 +108,15 @@ class RobotArmInterface:
     """Frame conversion utility function"""
     _pipeline_started: bool = False
     """Whether the camera pipeline is currently running"""
+    
+    # High-performance callback-based frame capture
+    _frameset_queue = None
+    """Queue for callback-delivered FrameSet objects (SDK-compliant with full functionality)"""
+    _frame_callback_active = False
+    """Flag to track if callback system is active"""
+    _max_queue_size = 3
+    """Maximum frames to keep in queue (optimized for MADSci node efficiency)"""
+    
     recording: bool = False
     """Whether we're currently recording expert trajectories"""
     current_trajectory_data: Dict[str, Any] = {}
@@ -105,7 +126,7 @@ class RobotArmInterface:
     last_timestamp: float = 0.0
     """Last timestamp for velocity calculation"""
     
-    def __init__(self, device_number: int = 0, data_path: str = "./expert_trajectories", 
+    def __init__(self, device_number: int = 0, data_path: str = "./captures", 
                  rgb_camera_index: int = 0, depth_camera_index: int = 1, enable_orbbec: bool = True):
         """Initialize the robot arm interface.
         
@@ -117,10 +138,23 @@ class RobotArmInterface:
             enable_orbbec: Whether to enable Orbbec DaiBai DCW2 camera via SDK
         """
         self.device_number = device_number
-        self.data_path = data_path
+        
+        # Use root directory captures folder
+        root_dir = Path(__file__).parent.parent  # Go up from nodes/ to root
+        self.data_path = root_dir / "captures"
+        self.data_path.mkdir(exist_ok=True)
+        
         self.rgb_camera_index = rgb_camera_index
         self.depth_camera_index = depth_camera_index
         self.enable_orbbec = enable_orbbec and ORBBEC_SDK_AVAILABLE
+        
+        # Create logger for future-proof logging (prints to stdout for now)
+        from madsci.client.event_client import EventClient
+        self.logger = EventClient()
+        
+        # Initialize high-performance frame capture queue (SDK-compliant approach)
+        self._frameset_queue = Queue()  # Store complete FrameSet objects for full functionality
+        self._frame_callback_active = False
         
         # Initialize the arm
         self.joint_angles = self._get_all_angles()
@@ -140,16 +174,13 @@ class RobotArmInterface:
     def _init_orbbec_camera(self):
         """Initialize the Orbbec DaiBai DCW2 camera configuration but don't start the pipeline yet."""
         if not self.enable_orbbec:
-            print("Orbbec camera disabled in configuration")
+            self.logger.log_info("Orbbec camera disabled in configuration")
             return
             
         try:
             # Initialize pipeline and configuration
             self.orbbec_pipeline = Pipeline()
             self.orbbec_config = Config()
-            
-            # Initialize point cloud filter
-            self.point_cloud_filter = PointCloudFilter()
             
             # Initialize frame conversion utility
             def frame_to_bgr_image(frame):
@@ -177,11 +208,11 @@ class RobotArmInterface:
                         image = np.resize(data, (height, width, 2))
                         image = cv2.cvtColor(image, cv2.COLOR_YUV2BGR_UYVY)
                     else:
-                        print(f"Unsupported color format: {color_format}")
+                        self.logger.log_error(f"Unsupported color format: {color_format}")
                         return None
                     return image
                 except Exception as e:
-                    print(f"Error converting frame to BGR: {e}")
+                    self.logger.log_error(f"Error converting frame to BGR: {e}")
                     return None
             
             self.frame_to_bgr_image = frame_to_bgr_image
@@ -190,14 +221,14 @@ class RobotArmInterface:
             try:
                 color_profiles = self.orbbec_pipeline.get_stream_profile_list(OBSensorType.COLOR_SENSOR)
                 if color_profiles and color_profiles.get_count() > 0:
-                    print(f"Found {color_profiles.get_count()} color profiles")
+                    self.logger.log_debug(f"Found {color_profiles.get_count()} color profiles")
                     
                     # Try to get RGB format at 640x480@10fps (lower FPS for recording efficiency)
                     color_profile = None
                     try:
                         color_profile = color_profiles.get_video_stream_profile(640, 480, OBFormat.RGB, 10)
                         if color_profile:
-                            print("✓ Using RGB 640x480@10fps color profile")
+                            self.logger.log_info("Using RGB 640x480@10fps color profile")
                     except:
                         pass
                     
@@ -206,7 +237,7 @@ class RobotArmInterface:
                         try:
                             color_profile = color_profiles.get_video_stream_profile(640, 480, OBFormat.RGB, 30)
                             if color_profile:
-                                print("✓ Using RGB 640x480@30fps color profile")
+                                self.logger.log_info("Using RGB 640x480@30fps color profile")
                         except:
                             pass
                     
@@ -215,25 +246,25 @@ class RobotArmInterface:
                         try:
                             color_profile = color_profiles.get_default_video_stream_profile()
                             if color_profile:
-                                print("✓ Using default color profile")
+                                self.logger.log_info("Using default color profile")
                         except:
                             pass
                     
                     if color_profile:
                         self.orbbec_config.enable_stream(color_profile)
-                        print(f"Color stream configured: {color_profile.get_width()}x{color_profile.get_height()}@{color_profile.get_fps()}fps")
+                        self.logger.log_info(f"Color stream configured: {color_profile.get_width()}x{color_profile.get_height()}@{color_profile.get_fps()}fps")
                     else:
-                        print("✗ No suitable color profile found")
+                        self.logger.log_error("No suitable color profile found")
                 else:
-                    print("✗ No color profiles available")
+                    self.logger.log_error("No color profiles available")
             except Exception as e:
-                print(f"Error configuring color stream: {e}")
+                self.logger.log_error(f"Error configuring color stream: {e}")
             
             # Configure depth stream
             try:
                 depth_profiles = self.orbbec_pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
                 if depth_profiles and depth_profiles.get_count() > 0:
-                    print(f"Found {depth_profiles.get_count()} depth profiles")
+                    self.logger.log_debug(f"Found {depth_profiles.get_count()} depth profiles")
                     
                     # Try to get a lower FPS depth profile for recording efficiency
                     depth_profile = None
@@ -241,7 +272,7 @@ class RobotArmInterface:
                         # Try 10fps first with Y16 format
                         depth_profile = depth_profiles.get_video_stream_profile(640, 480, OBFormat.Y16, 10)
                         if depth_profile:
-                            print("✓ Using 640x480@10fps depth profile")
+                            self.logger.log_info("Using 640x480@10fps depth profile")
                     except:
                         pass
                     
@@ -250,79 +281,95 @@ class RobotArmInterface:
                         try:
                             depth_profile = depth_profiles.get_default_video_stream_profile()
                             if depth_profile:
-                                print("✓ Using default depth profile")
+                                self.logger.log_info("Using default depth profile")
                         except:
                             pass
                     
                     if depth_profile:
                         self.orbbec_config.enable_stream(depth_profile)
-                        print(f"Depth stream configured: {depth_profile.get_width()}x{depth_profile.get_height()}@{depth_profile.get_fps()}fps")
+                        self.logger.log_info(f"Depth stream configured: {depth_profile.get_width()}x{depth_profile.get_height()}@{depth_profile.get_fps()}fps")
                     else:
-                        print("✗ No suitable depth profile found")
+                        self.logger.log_error("No suitable depth profile found")
                 else:
-                    print("✗ No depth profiles available")
+                    self.logger.log_error("No depth profiles available")
             except Exception as e:
-                print(f"Error configuring depth stream: {e}")
+                self.logger.log_error(f"Error configuring depth stream: {e}")
             
-            print("✓ Orbbec DaiBai DCW2 camera configured (pipeline not started)")
-            self._pipeline_started = False
+            self.logger.log_info("Orbbec DaiBai DCW2 camera configured - starting always-on pipeline")
+            
+            # Start pipeline immediately with callback-based capture (always-on approach)
+            try:
+                # Clear any existing frames in queue (following SDK pattern)
+                while not self._frameset_queue.empty():
+                    self._frameset_queue.get()
+                
+                # Activate callback system
+                self._frame_callback_active = True
+                
+                # Start pipeline with callback for continuous high-performance frame capture
+                self.orbbec_pipeline.start(self.orbbec_config, lambda frames: self._on_frame_callback(frames))
+                self._pipeline_started = True
+                
+                # Brief test to ensure pipeline is working
+                time.sleep(0.3)  # Give camera time to start
+                if not self._frameset_queue.empty():
+                    self.logger.log_info("Always-on camera pipeline started successfully - frames arriving via callback")
+                else:
+                    self.logger.log_info("Always-on camera pipeline started - waiting for first frames")
+                    
+            except Exception as e:
+                self.logger.log_error(f"Failed to start always-on camera pipeline: {e}")
+                self._pipeline_started = False
+                self._frame_callback_active = False
+                # Don't fail initialization - camera just won't be available
                     
         except Exception as e:
-            print(f"Error configuring Orbbec camera: {e}")
+            self.logger.log_error(f"Error configuring Orbbec camera: {e}")
             self.orbbec_pipeline = None
             self.orbbec_config = None
             self.point_cloud_filter = None
-    def _start_camera_pipeline(self) -> bool:
-        """Start the camera pipeline for recording. Returns True if successful."""
-        if self.orbbec_pipeline is None:
-            print("✗ Camera not configured")
-            return False
-            
-        if self._pipeline_started:
-            print("✓ Camera pipeline already running")
-            return True
-            
-        try:
-            self.orbbec_pipeline.start(self.orbbec_config)
-            self._pipeline_started = True
-            print("✓ Started camera pipeline for recording")
-            
-            # Brief test to ensure pipeline is working
-            try:
-                frames = self.orbbec_pipeline.wait_for_frames(1000)
-                if frames:
-                    print("✓ Camera pipeline test successful")
-                    return True
-                else:
-                    print("⚠ Camera pipeline test returned no frames")
-                    return True  # Still consider it started, might just need time
-            except Exception as e:
-                print(f"⚠ Camera pipeline test failed: {e}")
-                return True  # Still consider it started
-                
-        except Exception as e:
-            print(f"✗ Failed to start camera pipeline: {e}")
-            self._pipeline_started = False
-            return False
     
+    def _on_frame_callback(self, frames: FrameSet):
+        """Callback function following SDK pattern with FrameSet storage for full functionality.
+        
+        This matches the SDK queue management pattern while storing complete FrameSet objects
+        to maintain all functionality including point cloud generation.
+        """
+        if not self._frame_callback_active or frames is None:
+            return
+            
+        # Handle FrameSet storage with manual queue size management (SDK pattern)
+        if self._frameset_queue.qsize() >= self._max_queue_size:
+            self._frameset_queue.get()  # Remove oldest (blocking, like SDK examples)
+        self._frameset_queue.put(frames)  # Add new FrameSet (blocking, like SDK examples)
     def _stop_camera_pipeline(self) -> None:
-        """Stop the camera pipeline to free resources."""
+        """Stop the always-on camera pipeline during cleanup/shutdown only."""
         if self.orbbec_pipeline is None or not self._pipeline_started:
             return
             
         try:
+            # Deactivate callback system first
+            self._frame_callback_active = False
+            
+            # Stop the pipeline
             self.orbbec_pipeline.stop()
             self._pipeline_started = False
-            print("✓ Stopped camera pipeline")
+            
+            # Clear any remaining frames in queue (following SDK pattern)
+            while not self._frameset_queue.empty():
+                self._frameset_queue.get()
+            
+            self.logger.log_info("Stopped always-on camera pipeline during cleanup")
         except Exception as e:
-            print(f"Error stopping camera pipeline: {e}")
+            self.logger.log_error(f"Error stopping camera pipeline: {e}")
             # Mark as stopped anyway to prevent stuck state
             self._pipeline_started = False
+            self._frame_callback_active = False
     def _cleanup_cameras(self):
         """Clean up camera resources."""
         self._stop_camera_pipeline()
         if self.orbbec_pipeline is not None:
-            print("✓ Camera resources cleaned up")
+            self.logger.log_info("Camera resources cleaned up")
         """Load camera calibration data if available."""
         calibration_path = os.path.join(self.data_path, "camera_calibration.json")
         
@@ -357,11 +404,11 @@ class RobotArmInterface:
                 else:
                     return calibration_data
             else:
-                print(f"No calibration file found at {calibration_path}, using default values")
+                self.logger.log_info(f"No calibration file found at {calibration_path}, using default values")
                 return default_calibration
                 
         except Exception as e:
-            print(f"Error loading camera calibration: {e}, using default values")
+            self.logger.log_warning(f"Error loading camera calibration: {e}, using default values")
             return default_calibration
 
     def get_device_number(self) -> int:
@@ -378,13 +425,13 @@ class RobotArmInterface:
                 if angle is None:
                     if hasattr(self, 'joint_angles') and len(self.joint_angles) >= i:
                         angle = self.joint_angles[i-1]  # Use last known angle
-                        print(f"Warning: Servo {i} read failed, using last known angle: {angle}")
+                        self.logger.log_warning(f"Servo {i} read failed, using last known angle: {angle}")
                     else:
                         angle = 90  # Use middle position as fallback
-                        print(f"Warning: Servo {i} read failed, using default angle: {angle}")
+                        self.logger.log_warning(f"Servo {i} read failed, using default angle: {angle}")
                 angles.append(angle)
             except Exception as e:
-                print(f"Error reading servo {i} angle: {e}")
+                self.logger.log_error(f"Error reading servo {i} angle: {e}")
                 # Use last known angle or middle position as fallback
                 if hasattr(self, 'joint_angles') and len(self.joint_angles) >= i:
                     angles.append(self.joint_angles[i-1])
@@ -405,7 +452,7 @@ class RobotArmInterface:
                 self.last_angles = current_angles
             else:
                 # If we have None values, keep previous velocities or set to zero
-                print("Warning: Some joint angles are None, skipping velocity update")
+                self.logger.log_warning("Some joint angles are None, skipping velocity update")
                 if not hasattr(self, 'joint_velocities') or len(self.joint_velocities) != 5:
                     self.joint_velocities = [0.0, 0.0, 0.0, 0.0, 0.0]
                 # Update last_angles with valid values only
@@ -419,40 +466,45 @@ class RobotArmInterface:
         self.arm.Arm_serial_set_torque(1 if self.torque_state else 0)
 
     def capture_rgb_image(self) -> Optional[np.ndarray]:
-        """Capture an RGB image from the Orbbec camera via SDK.
+        """Capture an RGB image using SDK-compliant FrameSet storage for full functionality.
         
-        Note: This method requires the camera pipeline to be running.
-        It will not start the pipeline automatically to avoid resource waste.
+        This follows the SDK pattern with blocking queue operations while maintaining
+        complete FrameSet storage for maximum functionality.
         """
         if self.orbbec_pipeline is None:
-            print("✗ Camera not configured")
+            self.logger.log_error("Camera not configured")
             return None
             
-        if not self._pipeline_started:
-            print("✗ Camera pipeline not started. Use start_recording() to begin camera capture.")
+        if not self._frame_callback_active:
+            self.logger.log_error("Frame callback system not active - camera may not be initialized properly")
             return None
             
         try:
-            # Wait for frames with timeout
-            frames = self.orbbec_pipeline.wait_for_frames(1000)  # 1 second timeout
-            if not frames:
+            # Get latest FrameSet following SDK pattern
+            frames = None
+            if not self._frameset_queue.empty():
+                frames = self._frameset_queue.get()  # Blocking get() like SDK examples
+                
+            if frames is None:
                 return None
                 
             color_frame = frames.get_color_frame()
             if not color_frame:
                 return None
             
-            # Convert frame to BGR image
+            # Convert frame to BGR image using optimized conversion
             bgr_image = self.frame_to_bgr_image(color_frame)
             return bgr_image
             
         except Exception as e:
-            print(f"Error capturing RGB image: {e}")
+            self.logger.log_error(f"Error capturing RGB image: {e}")
             return None
 
     def _load_camera_calibration(self) -> Dict[str, Any]:
         """Load camera calibration data if available."""
-        calibration_path = os.path.join(self.data_path, "camera_calibration.json")
+        # Try example calibration file first, then standard calibration file
+        example_calibration_path = self.data_path / "example_camera_calibration.json"
+        calibration_path = self.data_path / "camera_calibration.json"
         
         # Default calibration values for Orbbec DaiBai DCW2 (approximate)
         default_calibration = {
@@ -467,9 +519,18 @@ class RobotArmInterface:
             "distortion_coefficients": [0.0, 0.0, 0.0, 0.0, 0.0]
         }
         
+        # Determine which calibration file to use
+        active_calibration_path = None
+        if example_calibration_path.exists():
+            active_calibration_path = example_calibration_path
+            self.logger.log_info(f"Using example camera calibration: {example_calibration_path}")
+        elif calibration_path.exists():
+            active_calibration_path = calibration_path
+            self.logger.log_info(f"Using camera calibration: {calibration_path}")
+        
         try:
-            if os.path.exists(calibration_path):
-                with open(calibration_path, 'r') as f:
+            if active_calibration_path:
+                with open(active_calibration_path, 'r') as f:
                     calibration_data = json.load(f)
                     
                 # Extract values from camera matrix format if present
@@ -501,11 +562,11 @@ class RobotArmInterface:
                     })
                     return result
             else:
-                print(f"No calibration file found at {calibration_path}, using default values")
+                self.logger.log_info("No calibration file found, using default values")
                 return default_calibration
                 
         except Exception as e:
-            print(f"Error loading camera calibration: {e}, using default values")
+            self.logger.log_warning(f"Error loading camera calibration: {e}, using default values")
             return default_calibration
 
     def capture_depth_data(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
@@ -517,16 +578,19 @@ class RobotArmInterface:
             Tuple of (depth_image, depth_colormap, point_cloud_data) or (None, None, None) if not available
         """
         if self.orbbec_pipeline is None:
-            print("✗ Camera not configured")
+            self.logger.log_error("Camera not configured")
             return None, None, None
             
-        if not self._pipeline_started:
-            print("✗ Camera pipeline not started. Use start_recording() to begin camera capture.")
+        if not self._frame_callback_active:
+            self.logger.log_error("Frame callback system not active - camera may not be initialized properly")
             return None, None, None
             
         try:
-            # Wait for frames with timeout
-            frames = self.orbbec_pipeline.wait_for_frames(1000)  # 1 second timeout
+            # Get latest FrameSet following SDK pattern
+            frames = None
+            if not self._frameset_queue.empty():
+                frames = self._frameset_queue.get()  # Blocking get() like SDK examples
+                
             if not frames:
                 return None, None, None
                 
@@ -543,17 +607,20 @@ class RobotArmInterface:
             depth_normalized = cv2.normalize(depth_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
             depth_colormap = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
             
-            # Generate point cloud data using the SDK's point cloud filter
+            # Generate point cloud data using the SDK's point cloud filter (RESTORED!)
             point_cloud_data = self._generate_point_cloud_sdk(frames)
             
             return depth_image, depth_colormap, point_cloud_data
             
         except Exception as e:
-            print(f"Error capturing depth data: {e}")
+            self.logger.log_error(f"Error capturing depth data: {e}")
             return None, None, None
     
     def _generate_point_cloud_sdk(self, frames) -> Optional[np.ndarray]:
-        """Generate a point cloud using the Orbbec SDK's PointCloudFilter.
+        """Generate a point cloud using the Orbbec SDK with YOUR calibrated camera parameters.
+        
+        This uses your custom calibration data from calibrate_depth_camera action
+        for maximum accuracy instead of generic SDK defaults.
         
         Args:
             frames: Frame set containing depth (and optionally color) frames
@@ -561,36 +628,69 @@ class RobotArmInterface:
         Returns:
             Point cloud as Nx3 numpy array (x, y, z coordinates) or None
         """
-        if self.point_cloud_filter is None:
+        if self.orbbec_pipeline is None:
+            self.logger.log_debug("Pipeline is None, cannot generate point cloud")
             return None
             
         try:
-            # Generate point cloud using SDK
-            point_cloud_frame = self.point_cloud_filter.process(frames)
-            if not point_cloud_frame:
-                return None
+            self.logger.log_debug("Attempting to generate point cloud using SDK with YOUR calibrated parameters")
             
-            # Convert to numpy array
-            point_data = np.frombuffer(point_cloud_frame.get_data(), dtype=np.float32)
+            # Try to get camera parameters from pipeline first (as fallback)
+            camera_param = self.orbbec_pipeline.get_camera_param()
+            if camera_param is None:
+                self.logger.log_debug("Failed to get camera parameters from pipeline")
+                return self._generate_point_cloud_manual(frames)
             
-            # Reshape to Nx3 (x, y, z coordinates)
-            # Each point is 3 floats (x, y, z)
-            num_points = len(point_data) // 3
-            if num_points * 3 != len(point_data):
-                print(f"Warning: Point cloud data size mismatch. Expected multiple of 3, got {len(point_data)}")
-                return None
+            # Override with YOUR calibrated parameters for maximum accuracy!
+            if hasattr(self, 'camera_calibration') and self.camera_calibration:
+                self.logger.log_debug("Using YOUR calibrated camera parameters instead of SDK defaults")
                 
-            points_3d = point_data.reshape((num_points, 3))
+                # Extract your calibrated intrinsics
+                fx = self.camera_calibration["fx"]
+                fy = self.camera_calibration["fy"] 
+                cx = self.camera_calibration["cx"]
+                cy = self.camera_calibration["cy"]
+                
+                # Update the camera parameter object with your calibrated values
+                # Note: This modifies the SDK's camera_param object with your better data
+                camera_param.rgb_intrinsic.fx = fx
+                camera_param.rgb_intrinsic.fy = fy
+                camera_param.rgb_intrinsic.cx = cx
+                camera_param.rgb_intrinsic.cy = cy
+                camera_param.depth_intrinsic.fx = fx  # Assuming RGB-D alignment
+                camera_param.depth_intrinsic.fy = fy
+                camera_param.depth_intrinsic.cx = cx
+                camera_param.depth_intrinsic.cy = cy
+                
+                self.logger.log_debug(f"Updated SDK camera params with your calibration: fx={fx}, fy={fy}, cx={cx}, cy={cy}")
+            else:
+                self.logger.log_warning("No calibrated parameters found - using SDK defaults (less accurate)")
             
-            # Filter out invalid points (NaN, inf, or zero depth)
-            valid_mask = np.isfinite(points_3d).all(axis=1) & (points_3d[:, 2] > 0.1) & (points_3d[:, 2] < 10.0)
-            valid_points = points_3d[valid_mask]
+            # Convert frames to points using SDK method with YOUR calibrated parameters
+            points = frames.convert_to_points(camera_param)
+            if points is None or len(points) == 0:
+                self.logger.log_debug("SDK convert_to_points returned no points")
+                return self._generate_point_cloud_manual(frames)
             
+            self.logger.log_debug(f"SDK generated {len(points)} points using your calibrated parameters")
+            
+            # Convert SDK points to numpy array
+            points_array = np.array([[point.x, point.y, point.z] for point in points], dtype=np.float32)
+            
+            # Filter out invalid points (NaN, inf, or unreasonable depth)
+            valid_mask = (
+                np.isfinite(points_array).all(axis=1) & 
+                (points_array[:, 2] > 0.1) & 
+                (points_array[:, 2] < 10.0)
+            )
+            valid_points = points_array[valid_mask]
+            
+            self.logger.log_debug(f"Calibrated point cloud generation successful: {len(valid_points)} valid points")
             return valid_points
             
         except Exception as e:
-            print(f"Error generating point cloud with SDK: {e}")
-            # Fallback to manual point cloud generation
+            self.logger.log_error(f"Error generating point cloud with calibrated SDK method: {e}")
+            # Fallback to manual point cloud generation (also uses your calibration)
             return self._generate_point_cloud_manual(frames)
     
     def _generate_point_cloud_manual(self, frames) -> Optional[np.ndarray]:
@@ -603,13 +703,16 @@ class RobotArmInterface:
             Point cloud as Nx3 numpy array (x, y, z coordinates) or None
         """
         try:
+            self.logger.log_debug("Attempting manual point cloud generation")
             depth_frame = frames.get_depth_frame()
             if not depth_frame:
+                self.logger.log_debug("No depth frame available for manual point cloud generation")
                 return None
                 
             # Convert to numpy array
             depth_data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
             depth_image = depth_data.reshape((depth_frame.get_height(), depth_frame.get_width()))
+            self.logger.log_debug(f"Depth image shape: {depth_image.shape}, min: {np.min(depth_image)}, max: {np.max(depth_image)}")
             
             # Use calibrated camera parameters
             fx = self.camera_calibration["fx"]
@@ -617,6 +720,8 @@ class RobotArmInterface:
             cx = self.camera_calibration["cx"]
             cy = self.camera_calibration["cy"]
             depth_scale = self.camera_calibration["depth_scale"]
+            
+            self.logger.log_debug(f"Using camera parameters: fx={fx}, fy={fy}, cx={cx}, cy={cy}, depth_scale={depth_scale}")
             
             height, width = depth_image.shape
             
@@ -629,6 +734,12 @@ class RobotArmInterface:
             
             # Filter out invalid depth values
             valid_mask = (depth_m > 0.1) & (depth_m < 10.0)  # Keep depths between 10cm and 10m
+            valid_depth_count = np.sum(valid_mask)
+            self.logger.log_debug(f"Valid depth pixels: {valid_depth_count} out of {depth_m.size}")
+            
+            if valid_depth_count == 0:
+                self.logger.log_warning("No valid depth values found for point cloud generation")
+                return None
             
             # Calculate 3D coordinates using pinhole camera model
             x = (u - cx) * depth_m / fx
@@ -646,35 +757,40 @@ class RobotArmInterface:
                 z_std = np.std(valid_points[:, 2])
                 outlier_mask = np.abs(valid_points[:, 2] - median_z) < 3 * z_std
                 valid_points = valid_points[outlier_mask]
+                
+                self.logger.log_debug(f"Manual point cloud generation successful: {len(valid_points)} valid points")
+            else:
+                self.logger.log_warning("No valid points generated in manual point cloud")
             
             return valid_points
             
         except Exception as e:
-            print(f"Error generating manual point cloud: {e}")
+            self.logger.log_error(f"Error generating manual point cloud: {e}")
             return None
     def capture_synchronized_data(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
-        """Capture synchronized RGB and depth data from the Orbbec camera.
-        
-        Note: This method requires the camera pipeline to be running.
+        """Capture synchronized RGB and depth data from the always-on Orbbec camera.
         
         Returns:
             Tuple of (rgb_image, depth_image, depth_colormap, point_cloud_data)
         """
         if self.orbbec_pipeline is None:
-            print("✗ Camera not configured")
+            self.logger.log_error("Camera not configured")
             return None, None, None, None
             
-        if not self._pipeline_started:
-            print("✗ Camera pipeline not started. Use start_recording() to begin camera capture.")
+        if not self._frame_callback_active:
+            self.logger.log_error("Frame callback system not active - camera may not be initialized properly")
             return None, None, None, None
             
         try:
-            # Wait for frames with timeout
-            frames = self.orbbec_pipeline.wait_for_frames(1000)  # 1 second timeout
+            # Get latest FrameSet following SDK pattern (much simpler!)
+            frames = None
+            if not self._frameset_queue.empty():
+                frames = self._frameset_queue.get()  # Blocking get() like SDK examples
+                
             if not frames:
                 return None, None, None, None
             
-            # Get RGB frame
+            # Get RGB image
             rgb_image = None
             color_frame = frames.get_color_frame()
             if color_frame:
@@ -695,13 +811,13 @@ class RobotArmInterface:
                 depth_normalized = cv2.normalize(depth_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
                 depth_colormap = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
                 
-                # Generate point cloud
+                # Generate point cloud (RESTORED!)
                 point_cloud_data = self._generate_point_cloud_sdk(frames)
             
             return rgb_image, depth_image, depth_colormap, point_cloud_data
             
         except Exception as e:
-            print(f"Error capturing synchronized data: {e}")
+            self.logger.log_error(f"Error capturing synchronized data: {e}")
             return None, None, None, None
             
     def start_recording(self, annotation: str = "") -> str:
@@ -714,24 +830,23 @@ class RobotArmInterface:
             ID of the trajectory being recorded
         """
         if self.recording:
-            print("Already recording a trajectory. Stop the current recording first.")
+            self.logger.log_warning("Already recording a trajectory. Stop the current recording first.")
             return self.current_trajectory_data.get("trajectory_id", "")
         
-        # Start the camera pipeline when recording begins
-        if self.orbbec_pipeline and not self._pipeline_started:
-            if not self._start_camera_pipeline():
-                print("⚠ Failed to start camera pipeline, continuing without camera data")
+        # Camera pipeline is always running - no need to start it
+        if self.orbbec_pipeline and not self._frame_callback_active:
+            self.logger.log_warning("Camera pipeline not active - images may not be captured")
             
-        # Generate a unique ID for this trajectory
-        trajectory_id = f"trajectory_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        trajectory_dir = os.path.join(self.data_path, trajectory_id)
-        os.makedirs(trajectory_dir, exist_ok=True)
-        os.makedirs(os.path.join(trajectory_dir, "rgb_images"), exist_ok=True)
-        os.makedirs(os.path.join(trajectory_dir, "depth_images"), exist_ok=True)
-        os.makedirs(os.path.join(trajectory_dir, "point_clouds"), exist_ok=True)
+        # Generate a unique ID for this experiment
+        experiment_id = f"experiment_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        experiment_dir = self.data_path / experiment_id
+        experiment_dir.mkdir(exist_ok=True)
+        (experiment_dir / "rgb_images").mkdir(exist_ok=True)
+        (experiment_dir / "depth_images").mkdir(exist_ok=True)
+        (experiment_dir / "point_clouds").mkdir(exist_ok=True)
         
         self.current_trajectory_data = {
-            "trajectory_id": trajectory_id,
+            "trajectory_id": experiment_id,
             "annotation": annotation,
             "start_time": time.time(),
             "joint_states": [],
@@ -740,8 +855,8 @@ class RobotArmInterface:
         }
         
         self.recording = True
-        print(f"Started recording trajectory {trajectory_id}")
-        return trajectory_id
+        self.logger.log_info(f"Started recording experiment {experiment_id} with always-on camera pipeline")
+        return experiment_id
         
     def stop_recording(self) -> Optional[str]:
         """Stop recording the current expert trajectory and save the data.
@@ -750,11 +865,11 @@ class RobotArmInterface:
             ID of the saved trajectory or None if no recording was active
         """
         if not self.recording:
-            print("No active recording to stop.")
+            self.logger.log_warning("No active recording to stop.")
             return None
             
-        trajectory_id = self.current_trajectory_data["trajectory_id"]
-        trajectory_dir = os.path.join(self.data_path, trajectory_id)
+        experiment_id = self.current_trajectory_data["trajectory_id"]
+        experiment_dir = self.data_path / experiment_id
         
         # Add end time
         self.current_trajectory_data["end_time"] = time.time()
@@ -763,16 +878,13 @@ class RobotArmInterface:
         )
         
         # Save trajectory metadata and joint states
-        with open(os.path.join(trajectory_dir, "trajectory_data.json"), "w") as f:
+        with open(experiment_dir / "trajectory_data.json", "w") as f:
             json.dump(self.current_trajectory_data, f, indent=2)
         
-        # Stop the camera pipeline when recording ends
-        if self.orbbec_pipeline and self._pipeline_started:
-            self._stop_camera_pipeline()
-            
+        # Camera pipeline stays running (always-on approach) - no need to stop
         self.recording = False
-        print(f"Stopped and saved trajectory {trajectory_id}")
-        return trajectory_id
+        self.logger.log_info(f"Stopped and saved experiment {experiment_id} - camera pipeline remains active")
+        return experiment_id
         
     def record_data_point(self, action_name: str = None, action_params: Dict = None):
         """Record a data point in the current trajectory.
@@ -785,8 +897,8 @@ class RobotArmInterface:
             return
             
         timestamp = time.time()
-        trajectory_id = self.current_trajectory_data["trajectory_id"]
-        trajectory_dir = os.path.join(self.data_path, trajectory_id)
+        experiment_id = self.current_trajectory_data["trajectory_id"]
+        experiment_dir = self.data_path / experiment_id
         
         # Update joint velocities
         self._update_joint_velocities()
@@ -810,26 +922,26 @@ class RobotArmInterface:
         image_data = {"frame_id": frame_id, "timestamp": timestamp}
         
         if rgb_image is not None:
-            rgb_path = os.path.join(trajectory_dir, "rgb_images", f"{frame_id}.jpg")
-            cv2.imwrite(rgb_path, rgb_image)
+            rgb_path = experiment_dir / "rgb_images" / f"{frame_id}.jpg"
+            cv2.imwrite(str(rgb_path), rgb_image)
             image_data["rgb_path"] = f"rgb_images/{frame_id}.jpg"
             
         if depth_image is not None:
             # Save raw depth image
-            depth_path = os.path.join(trajectory_dir, "depth_images", f"{frame_id}_depth.png")
-            cv2.imwrite(depth_path, depth_image)
+            depth_path = experiment_dir / "depth_images" / f"{frame_id}_depth.png"
+            cv2.imwrite(str(depth_path), depth_image)
             image_data["depth_path"] = f"depth_images/{frame_id}_depth.png"
             
             # Save colorized depth map for visualization
             if depth_colormap is not None:
-                depth_colormap_path = os.path.join(trajectory_dir, "depth_images", f"{frame_id}_depth_colormap.jpg")
-                cv2.imwrite(depth_colormap_path, depth_colormap)
+                depth_colormap_path = experiment_dir / "depth_images" / f"{frame_id}_depth_colormap.jpg"
+                cv2.imwrite(str(depth_colormap_path), depth_colormap)
                 image_data["depth_colormap_path"] = f"depth_images/{frame_id}_depth_colormap.jpg"
             
             # Save point cloud data
             if point_cloud_data is not None:
-                point_cloud_path = os.path.join(trajectory_dir, "point_clouds", f"{frame_id}_pointcloud.npy")
-                np.save(point_cloud_path, point_cloud_data)
+                point_cloud_path = experiment_dir / "point_clouds" / f"{frame_id}_pointcloud.npy"
+                np.save(str(point_cloud_path), point_cloud_data)
                 image_data["point_cloud_path"] = f"point_clouds/{frame_id}_pointcloud.npy"
                 image_data["point_cloud_size"] = len(point_cloud_data)
         
@@ -889,7 +1001,7 @@ class RobotArmInterface:
                 time.sleep(2)
             
         except Exception as e:
-            print(f"An error occurred in move_single_joint (servo: {servo_id}): {e}")
+            self.logger.log_error(f"An error occurred in move_single_joint (servo: {servo_id}): {e}")
 
         self.is_moving = False
         self.joint_angles[servo_id -1] = angle
@@ -930,7 +1042,7 @@ class RobotArmInterface:
                 time.sleep(2)
                 
         except Exception as e:
-            print(f"An error occurred in move_all_joints: {e}")
+            self.logger.log_error(f"An error occurred in move_all_joints: {e}")
 
         self.is_moving = False
         self.joint_angles = angles[:5]
@@ -967,7 +1079,7 @@ class RobotArmInterface:
                 time.sleep(1)
                 
         except Exception as e:
-            print(f"An error occurred in close_gripper: {e}")
+            self.logger.log_error(f"An error occurred in close_gripper: {e}")
 
         self.is_moving = False
         self.gripper_closed = True
@@ -1004,7 +1116,7 @@ class RobotArmInterface:
                 time.sleep(1)
                 
         except Exception as e:
-            print(f"An error occurred in open_gripper: {e}")
+            self.logger.log_error(f"An error occurred in open_gripper: {e}")
 
         self.is_moving = False
         self.gripper_closed = False
@@ -1082,14 +1194,15 @@ class RobotArmNode(RestNode):
         "gripper_closed": False,
         "recording": False,
         "current_trajectory_id": None,
-        "camera_pipeline_started": False
+        "camera_active": False,
+        "frameset_queue_size": 0
     }
 
     def startup_handler(self) -> None:
         """Handle the startup of the node."""
         # Get config values with defaults if attributes are missing
         device_number = getattr(self.config, 'device_number', 0)
-        data_path = getattr(self.config, 'data_collection_path', "./expert_trajectories")
+        data_path = getattr(self.config, 'data_collection_path', "./captures")
         rgb_camera_index = getattr(self.config, 'rgb_camera_index', 0)  # Not used with Orbbec SDK
         depth_camera_index = getattr(self.config, 'depth_camera_index', 1)  # Not used with Orbbec SDK
         enable_orbbec = getattr(self.config, 'enable_orbbec_camera', True)  # Enabled by default if SDK available
@@ -1097,7 +1210,7 @@ class RobotArmNode(RestNode):
         self.logger.log_info(f"Connecting to robot {device_number}...")
         self.robot_interface = RobotArmInterface(
             device_number=device_number,
-            data_path=data_path,
+            data_path=data_path,  # This will be overridden to use root/captures
             rgb_camera_index=rgb_camera_index,
             depth_camera_index=depth_camera_index,
             enable_orbbec=enable_orbbec
@@ -1112,14 +1225,15 @@ class RobotArmNode(RestNode):
         self.logger.log_info(f"Disconnecting from robot {device_number}...")
         
         # Stop recording if active
-        if self.robot_interface.recording:
+        if self.robot_interface and self.robot_interface.recording:
             self.robot_interface.stop_recording()
             
         # Clean up camera resources
-        if hasattr(self.robot_interface, "_cleanup_cameras"):
+        if self.robot_interface and hasattr(self.robot_interface, "_cleanup_cameras"):
             self.robot_interface._cleanup_cameras()
             
-        del self.robot_interface
+        if self.robot_interface:
+            del self.robot_interface
         self.logger.log_info(f"Disconnected from robot {device_number}")
 
     def state_handler(self) -> None:
@@ -1131,7 +1245,9 @@ class RobotArmNode(RestNode):
                 "gripper_closed": self.robot_interface.gripper_closed,
                 "recording": self.robot_interface.recording,
                 "current_trajectory_id": self.robot_interface.current_trajectory_data.get("trajectory_id") if self.robot_interface.recording else None,
-                "camera_pipeline_started": self.robot_interface._pipeline_started
+                "camera_active": (self.robot_interface.orbbec_pipeline is not None and 
+                                self.robot_interface._frame_callback_active),
+                "frameset_queue_size": self.robot_interface._frameset_queue.qsize() if self.robot_interface._frameset_queue else 0
             }
         else:
             self.node_state = {
@@ -1140,7 +1256,8 @@ class RobotArmNode(RestNode):
                 "gripper_closed": None,
                 "recording": False,
                 "current_trajectory_id": None,
-                "camera_pipeline_started": False
+                "camera_active": False,
+                "frameset_queue_size": 0
             }
 
     def status_handler(self) -> None:
@@ -1215,9 +1332,9 @@ class RobotArmNode(RestNode):
         self.logger.log_info(f"Moved item from {locations[0]} degrees to {locations[1]} degrees")
         return ActionSucceeded()
         
-    @action(name="start_recording", description="Start camera pipeline and begin recording expert trajectory data")
+    @action(name="start_recording", description="Begin recording expert trajectory data with always-on camera")
     def start_recording(self, annotation: str = "", task_description: str = "") -> ActionResult:
-        """Start camera pipeline and begin recording expert trajectory data with annotations."""
+        """Begin recording expert trajectory data with annotations using always-on camera pipeline."""
         if self.robot_interface is None:
             self.logger.log_error("Robot interface not initialized")
             return ActionFailed(errors="Robot interface not initialized")
@@ -1227,17 +1344,12 @@ class RobotArmNode(RestNode):
             return ActionFailed(errors="Already recording a trajectory")
         
         try:
-            # Step 1: Start camera pipeline first
-            self.logger.log_info("Starting camera pipeline for recording...")
-            pipeline_success = self.robot_interface._start_camera_pipeline()
-            if not pipeline_success:
-                self.logger.log_warning("Failed to start camera pipeline, continuing without camera data")
-            
-            # Step 2: Start recording trajectory
+            # Camera pipeline is always running - just start recording
+            self.logger.log_info("Starting trajectory recording with always-on camera pipeline...")
             trajectory_id = self.robot_interface.start_recording(annotation)
             self.logger.log_info(f"Started recording expert trajectory: {trajectory_id}")
             
-            # Step 3: Record initial annotation with task description
+            # Record initial annotation with task description
             if task_description:
                 full_annotation = f"{annotation} - Task: {task_description}"
             else:
@@ -1250,9 +1362,13 @@ class RobotArmNode(RestNode):
                 )
                 self.logger.log_info(f"Recorded initial annotation: {full_annotation}")
             
+            # Check camera status for informational purposes
+            camera_active = (self.robot_interface.orbbec_pipeline is not None and 
+                           self.robot_interface._frame_callback_active)
+            
             return ActionSucceeded(data={
                 "trajectory_id": trajectory_id,
-                "camera_pipeline_started": pipeline_success,
+                "camera_active": camera_active,
                 "annotation_recorded": bool(full_annotation)
             })
             
@@ -1262,15 +1378,13 @@ class RobotArmNode(RestNode):
             try:
                 if self.robot_interface.recording:
                     self.robot_interface.stop_recording()
-                if self.robot_interface._pipeline_started:
-                    self.robot_interface._stop_camera_pipeline()
             except:
                 pass
             return ActionFailed(errors=str(e))
         
-    @action(name="stop_recording", description="Stop recording and stop camera pipeline")
+    @action(name="stop_recording", description="Stop recording trajectory data (camera pipeline remains active)")
     def stop_recording(self) -> ActionResult:
-        """Stop recording expert trajectory data and stop camera pipeline."""
+        """Stop recording expert trajectory data while keeping camera pipeline active."""
         if self.robot_interface is None:
             self.logger.log_error("Robot interface not initialized")
             return ActionFailed(errors="Robot interface not initialized")
@@ -1280,20 +1394,18 @@ class RobotArmNode(RestNode):
             return ActionFailed(errors="No active recording to stop")
         
         try:
-            # Step 1: Stop recording trajectory
+            # Stop recording trajectory (camera pipeline stays active)
             trajectory_id = self.robot_interface.stop_recording()
             self.logger.log_info(f"Stopped recording expert trajectory: {trajectory_id}")
             
-            # Step 2: Stop camera pipeline
-            pipeline_stopped = False
-            if self.robot_interface._pipeline_started:
-                self.robot_interface._stop_camera_pipeline()
-                pipeline_stopped = True
-                self.logger.log_info("Stopped camera pipeline")
+            # Camera pipeline remains active for always-on approach
+            camera_active = (self.robot_interface.orbbec_pipeline is not None and 
+                           self.robot_interface._frame_callback_active)
             
             return ActionSucceeded(data={
                 "trajectory_id": trajectory_id,
-                "camera_pipeline_stopped": pipeline_stopped
+                "camera_remains_active": camera_active,
+                "message": f"Stopped recording {trajectory_id} - camera pipeline remains active"
             })
             
         except Exception as e:
@@ -1380,11 +1492,9 @@ class RobotArmNode(RestNode):
         if not ORBBEC_SDK_AVAILABLE:
             return ActionFailed(errors="pyorbbecsdk not available")
         
-        # Start camera pipeline if not already running
-        pipeline_was_started = self.robot_interface._pipeline_started
-        if not pipeline_was_started:
-            if not self.robot_interface._start_camera_pipeline():
-                return ActionFailed(errors="Failed to start camera pipeline for calibration")
+        # Camera pipeline is always running - no need to start it
+        if not self.robot_interface._frame_callback_active:
+            return ActionFailed(errors="Camera pipeline not active - cannot perform calibration")
         
         try:
             checkerboard_size = (checkerboard_width, checkerboard_height)
@@ -1406,19 +1516,19 @@ class RobotArmNode(RestNode):
             failed_captures = 0
             max_failed_attempts = num_images * 3  # Allow some failed attempts
             
-            self.logger.log_info(f"Starting camera calibration...")
+            self.logger.log_info(f"Starting camera calibration with always-on pipeline...")
             self.logger.log_info(f"Checkerboard: {checkerboard_width}x{checkerboard_height} internal corners (11x8 squares)")
             self.logger.log_info(f"Square size: {square_size_mm}mm")
             self.logger.log_info(f"Target images: {num_images}")
             self.logger.log_info("Move the checkerboard to different positions and angles between captures")
             
             while captured_images < num_images and failed_captures < max_failed_attempts:
-                # Capture image
+                # Capture image from always-on pipeline
                 rgb_image = self.robot_interface.capture_rgb_image()
                 if rgb_image is None:
                     failed_captures += 1
                     self.logger.log_warning("Failed to capture image, retrying...")
-                    time.sleep(1)
+                    time.sleep(0.5)  # Shorter wait with always-on pipeline
                     continue
                 
                 # Convert to grayscale for corner detection
@@ -1559,9 +1669,8 @@ class RobotArmNode(RestNode):
             return ActionFailed(errors=str(e))
             
         finally:
-            # Stop camera pipeline if we started it
-            if not pipeline_was_started and self.robot_interface._pipeline_started:
-                self.robot_interface._stop_camera_pipeline()
+            # Camera pipeline remains active (always-on approach)
+            pass
     
     def _assess_calibration_quality(self, mean_error: float, max_error: float) -> str:
         """Assess the quality of camera calibration based on reprojection errors."""
@@ -1625,7 +1734,7 @@ class RobotArmNode(RestNode):
                     validation_results["warnings"].append(f"High reprojection error: {error:.3f} pixels")
             
             # Test point cloud generation if camera is available
-            if self.robot_interface._pipeline_started:
+            if self.robot_interface._frame_callback_active:
                 try:
                     _, _, _, point_cloud = self.robot_interface.capture_synchronized_data()
                     if point_cloud is not None:
@@ -1668,6 +1777,52 @@ class RobotArmNode(RestNode):
         except Exception as e:
             self.logger.log_error(f"Error validating calibration: {e}")
             return ActionFailed(errors=str(e))
+
+    @action(name="capture_single_image", description="Capture a single image from the camera")
+    def capture_single_image(self) -> ActionResult:
+        """Capture a single RGB image from the always-on camera pipeline."""
+        if self.robot_interface is None:
+            return ActionFailed(errors="Robot interface not initialized")
+            
+        if not ORBBEC_SDK_AVAILABLE:
+            return ActionFailed(errors="Camera not available")
+        
+        try:
+            # Capture image from always-on pipeline (should be instant and reliable)
+            self.logger.log_info("Capturing image from always-on pipeline")
+            rgb_image = self.robot_interface.capture_rgb_image()
+            
+            if rgb_image is None:
+                return ActionFailed(errors="Failed to capture image - no frames available in queue")
+            
+            # Save image in root directory captures folder
+            root_dir = Path(__file__).parent.parent  # Go up from nodes/ to root
+            captures_dir = root_dir / "captures"
+            captures_dir.mkdir(exist_ok=True)
+            
+            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"capture_{timestamp}.jpg"
+            filepath = captures_dir / filename
+            
+            # Verify image is valid before saving
+            if rgb_image.size == 0:
+                return ActionFailed(errors="Captured image is empty")
+            
+            success = cv2.imwrite(str(filepath), rgb_image)
+            if not success:
+                return ActionFailed(errors="Failed to save image file")
+            
+            self.logger.log_info(f"Successfully captured and saved image: {filename}")
+            return ActionSucceeded(data={
+                "message": f"Image saved as captures/{filename}",
+                "filename": filename,
+                "image_shape": rgb_image.shape,
+                "file_path": str(filepath)
+            })
+            
+        except Exception as e:
+            self.logger.log_error(f"Exception during image capture: {e}")
+            return ActionFailed(errors=f"Exception during capture: {str(e)}")
 
     @action(name="generate_position_variations", description="Generate and preview position variations for dataset collection")
     def generate_position_variations(self, 

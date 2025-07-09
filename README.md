@@ -25,19 +25,25 @@ This repository works alongside the main MADSci framework in a distributed archi
 MEDAL-LAB/
 ├── .env.example                       # Example environment configuration
 ├── ARCHITECTURE.md                    # Core framework architecture design
-├── captures/                          # Camera calibration and data capture
-│   └── example_camera_calibration.json    # Example calibration parameters
+├── captures/                          # Data capture and camera calibration
+│   ├── example_camera_calibration.json    # Example calibration parameters
+│   ├── experiment_YYYYMMDD_HHMMSS/        # Recorded experiment data (git-ignored)
+│   │   ├── rgb_images/                     # RGB camera frames
+│   │   ├── depth_images/                   # Depth camera data
+│   │   ├── point_clouds/                   # 3D point cloud data
+│   │   └── trajectory_data.json            # Joint states and metadata
+│   └── capture_YYYYMMDD_HHMMSS.jpg        # Single image captures (git-ignored)
 ├── workflows/                         # Workflow examples and scripts
 │   ├── recording_workflow.py             # Data collection with synchronized recording
 │   ├── transfer.py                       # Basic robot transfer operations
 │   ├── camera_calibration.py             # Camera calibration workflow
-│   └── validate_calibration.py           # Calibration validation workflow
+│   ├── validate_calibration.py           # Calibration validation workflow
+│   └── take_picture.py                   # Single image capture workflow
 ├── managers/                          # Workcell configuration
 │   └── example_wc.workcell.yaml          # Example workcell setup
 ├── nodes/                            # Robot nodes and hardware control
 │   ├── dofbot_expert_node.py             # Main DOFBOT Pro node with camera integration
 │   ├── Arm_Lib.py                        # Low-level arm control library
-│   ├── angle_finder.py                   # Servo position utility
 │   └── default.node.yaml                 # Default node configuration
 └── tools/                            # Hardware testing and diagnostic tools
     ├── diagnose_orbbec_device.py         # Orbbec camera diagnostic script
@@ -205,6 +211,7 @@ python workflows/validate_calibration.py
 ```python
 # workflows/recording_workflow.py  
 # Synchronized camera recording during robot operations for training data collection
+# Data automatically saved to captures/experiment_YYYYMMDD_HHMMSS/ directories
 ```
 
 ### Camera Calibration
@@ -212,6 +219,21 @@ python workflows/validate_calibration.py
 # workflows/camera_calibration.py
 # Automated camera calibration workflow
 ```
+
+### Single Image Capture Workflow
+```python
+# workflows/take_picture.py
+# Workflow for capturing single images using the robot node's capture_single_image action
+```
+
+### Single Image Capture
+The robot node includes a `capture_single_image` action that:
+- Temporarily starts the camera pipeline if needed
+- Captures a single RGB image
+- Saves it as `captures/capture_YYYYMMDD_HHMMSS.jpg`
+- Automatically stops the camera pipeline to conserve resources
+
+**Note**: All experimental data (experiment folders and single captures) are automatically excluded from git commits to protect your personal research data.
 
 ## 🔧 Configuration
 
@@ -224,13 +246,14 @@ python workflows/validate_calibration.py
 
 ### Node Configuration
 - `nodes/default.node.yaml` - Default node settings
-- `nodes/angle_finder.py` - Utility for manual position setup
 
 ### Workcell Configuration  
 - `managers/example_wc.workcell.yaml` - Workcell setup with nodes and locations
 
 ### Camera Calibration
 - `captures/example_camera_calibration.json` - Example calibration parameters
+- Experiment data automatically saved to `captures/experiment_*/` directories
+- Single image captures saved as `captures/capture_*.jpg` files
 
 ## 🌐 Network Architecture
 

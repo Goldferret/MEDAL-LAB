@@ -20,7 +20,7 @@ current_location = 90
 # Next location of item (angle)
 next_location = 90
 # Approach method, Retreat/Return method, and Grab orientation (in order)
-movement_keys = ["angled_above", "angled_above", "horizontal"]
+movement_keys = ["directly_above", "directly_above", "horizontal"]
 
 # Create workflow for this demonstration
 demo_workflow = WorkflowDefinition(
