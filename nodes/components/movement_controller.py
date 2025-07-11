@@ -14,7 +14,6 @@ import numpy as np
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from functools import wraps
-from contextlib import contextmanager
 
 # Import robot arm library
 try:
@@ -54,14 +53,6 @@ class MovementController:
         self.gripper_closed = False
         self.torque_state = False
         
-        # Recording state
-        self.recording = False
-        self.current_trajectory_data = {
-            "joint_states": [],
-            "images": [],
-            "timestamps": []
-        }
-        
         # Movement presets from config
         self.approach_method = {
             "directly_above": [40, 60, 0],  # Basic lean-on-top approach (servos 2, 3, 4)
@@ -80,27 +71,14 @@ class MovementController:
             "angled_above": 45,      # Gripper angle for angled approach
         }
     
-    @contextmanager
-    def record_action(self, action_name: str, action_params: Dict = None, record_action: bool = True):
-        """Context manager for automatic recording start/end."""
-        # Start recording if enabled
-        if record_action and self.recording:
-            self._record_data_point(action_name=action_name, action_params=action_params or {})
-        
-        try:
-            yield  # Execute the action
-        finally:
-            # End recording if enabled
-            if record_action and self.recording:
-                self._record_data_point()
-    
-    def _execute_servo_movement(self, angles: List[int], duration_ms: int = 2000, movement_time_s: float = 2.0):
-        """Execute servo movement with gripper angle and recording support.
+    def _execute_servo_movement(self, angles: List[int], duration_ms: int = 2000, movement_time_s: float = 2.0, recording_callback=None):
+        """Execute servo movement with optional continuous recording via callback.
         
         Args:
             angles: Joint angles (without gripper)
             duration_ms: Movement duration in milliseconds
             movement_time_s: Time to wait/record during movement
+            recording_callback: Optional function to call continuously during movement for recording
         """
         # Add gripper angle automatically
         angles_with_gripper = angles.copy()
@@ -109,14 +87,19 @@ class MovementController:
         # Execute movement
         self.arm.Arm_serial_servo_write6_array(angles_with_gripper, duration_ms)
         
-        # Handle recording during movement
-        if self.recording:
+        # Handle continuous recording via callback if provided
+        if recording_callback:
             start_time = time.time()
             interval = 1.0 / 10.0  # 10Hz recording
             while time.time() - start_time < movement_time_s:
-                self._record_data_point()
+                try:
+                    recording_callback()  # Interface provides the recording function
+                except Exception as e:
+                    # Don't let recording errors break movement - just log and continue
+                    pass
                 time.sleep(interval)
         else:
+            # Just wait for movement to complete
             time.sleep(movement_time_s)
     
     def _move_gripper(self, closed: bool, record_action: bool = True):
@@ -126,13 +109,11 @@ class MovementController:
             closed: True to close gripper, False to open
             record_action: Whether to record this action
         """
-        action_name = "close_gripper" if closed else "open_gripper"
         angle = 145 if closed else 90
         
-        with self.record_action(action_name, {}, record_action):
-            self.arm.Arm_serial_servo_write(6, angle, 1000)
-            time.sleep(1)
-            self.gripper_closed = closed
+        self.arm.Arm_serial_servo_write(6, angle, 1000)
+        time.sleep(1)
+        self.gripper_closed = closed
     
     # ========== Core Movement Methods ==========
     
@@ -153,37 +134,48 @@ class MovementController:
         except Exception as e:
             self.logger.log_error(f"Error changing torque state: {e}")
     
-    def move_single_joint(self, servo_id: int, angle: int, record_action: bool = True) -> None:
-        """Move a single joint to the specified angle."""
+    def move_single_joint(self, servo_id: int, angle: int, record_action: bool = True, recording_callback=None) -> None:
+        """Move a single joint to the specified angle.
+        
+        Args:
+            servo_id: Servo ID (1-6)
+            angle: Target angle
+            record_action: Whether to record this action (for backward compatibility)
+            recording_callback: Optional callback function for continuous recording during movement
+        """
         if not self.arm:
             raise RuntimeError("Robot arm not initialized")
         
         if servo_id < 1 or servo_id > 6:
             raise ValueError("Invalid servo id - must be 1-6")
         
-        with self.record_action("move_single_joint", {"servo_id": servo_id, "angle": angle}, record_action):
-            # Update joint angles array and execute movement
-            angles = self.joint_angles.copy()
-            angles[servo_id - 1] = angle
-            
-            self._execute_servo_movement(angles)
-            
-            # Update joint state
-            self.joint_angles[servo_id - 1] = angle
+        # Update joint angles array and execute movement
+        angles = self.joint_angles.copy()
+        angles[servo_id - 1] = angle
+        
+        self._execute_servo_movement(angles, recording_callback=recording_callback)
+        
+        # Update joint state
+        self.joint_angles[servo_id - 1] = angle
     
-    def move_all_joints(self, angles: List[int], record_action: bool = True) -> None:
-        """Move all joints to the specified angles simultaneously."""
+    def move_all_joints(self, angles: List[int], record_action: bool = True, recording_callback=None) -> None:
+        """Move all joints to the specified angles simultaneously.
+        
+        Args:
+            angles: List of 5 joint angles
+            record_action: Whether to record this action (for backward compatibility)
+            recording_callback: Optional callback function for continuous recording during movement
+        """
         if not self.arm:
             raise RuntimeError("Robot arm not initialized")
         
         if len(angles) != 5:
             raise ValueError("Expected 5 joint angles")
         
-        with self.record_action("move_all_joints", {"angles": angles}, record_action):
-            self._execute_servo_movement(angles)
-            
-            # Update joint state
-            self.joint_angles = angles.copy()
+        self._execute_servo_movement(angles, recording_callback=recording_callback)
+        
+        # Update joint state
+        self.joint_angles = angles.copy()
     
     def close_gripper(self, record_action: bool = True) -> None:
         """Close the robot gripper."""
@@ -201,51 +193,55 @@ class MovementController:
     
     # ========== High-Level Operations ==========
     
-    def pick_from_source(self, source_angle: int, approach_key: str, return_key: str, grab_key: str, record_action: bool = True) -> None:
-        """Pick an item from the specified source location."""
+    def pick_from_source(self, source_angle: int, approach_key: str, return_key: str, grab_key: str, record_action: bool = True, recording_callback=None) -> None:
+        """Pick an item from the specified source location.
+        
+        Args:
+            source_angle: Angle to rotate to for source location
+            approach_key: Key for approach method
+            return_key: Key for return method  
+            grab_key: Key for grabbing method
+            record_action: Whether to record this action (for backward compatibility)
+            recording_callback: Optional callback function for continuous recording during movements
+        """
         if not self.arm:
             raise RuntimeError("Robot arm not initialized")
         
-        with self.record_action("pick_from_source", {
-            "source_angle": source_angle,
-            "approach_key": approach_key,
-            "return_key": return_key,
-            "grab_key": grab_key
-        }, record_action):
-            
-            # Build movement sequences
-            pick_method = [source_angle] + self.approach_method[approach_key] + [self.grabbing_method[grab_key]]
-            return_method = [source_angle] + self.return_method[return_key] + [self.grabbing_method[grab_key]]
-            
-            # Execute pick sequence
-            self.move_all_joints([90, 180, 0, 0, 90], record_action=False)  # Move to grabber position
-            self.move_single_joint(1, source_angle, record_action=False)     # Rotate to face source location
-            self.move_all_joints(pick_method, record_action=False)           # Lean forward to grab
-            self.close_gripper(record_action=False)                          # Close gripper
-            self.move_all_joints(return_method, record_action=False)         # Move back up
+        # Build movement sequences
+        pick_method = [source_angle] + self.approach_method[approach_key] + [self.grabbing_method[grab_key]]
+        return_method = [source_angle] + self.return_method[return_key] + [self.grabbing_method[grab_key]]
+        
+        # Execute pick sequence - pass callback to movements that need continuous recording
+        self.move_all_joints([90, 180, 0, 0, 90], record_action=False, recording_callback=recording_callback)  # Move to grabber position
+        self.move_single_joint(1, source_angle, record_action=False, recording_callback=recording_callback)     # Rotate to face source location
+        self.move_all_joints(pick_method, record_action=False, recording_callback=recording_callback)           # Lean forward to grab
+        self.close_gripper(record_action=False)                          # Close gripper (no continuous recording needed)
+        self.move_all_joints(return_method, record_action=False, recording_callback=recording_callback)         # Move back up
     
-    def place_at_target(self, target_angle: int, approach_key: str, return_key: str, grab_key: str, record_action: bool = True) -> None:
-        """Place an item at the specified target location."""
+    def place_at_target(self, target_angle: int, approach_key: str, return_key: str, grab_key: str, record_action: bool = True, recording_callback=None) -> None:
+        """Place an item at the specified target location.
+        
+        Args:
+            target_angle: Angle to rotate to for target location
+            approach_key: Key for approach method
+            return_key: Key for return method
+            grab_key: Key for grabbing method  
+            record_action: Whether to record this action (for backward compatibility)
+            recording_callback: Optional callback function for continuous recording during movements
+        """
         if not self.arm:
             raise RuntimeError("Robot arm not initialized")
         
-        with self.record_action("place_at_target", {
-            "target_angle": target_angle,
-            "approach_key": approach_key,
-            "return_key": return_key,
-            "grab_key": grab_key
-        }, record_action):
-            
-            # Build movement sequences
-            place_method = [target_angle] + self.approach_method[approach_key] + [self.grabbing_method[grab_key]]
-            return_method = [target_angle] + self.return_method[return_key] + [self.grabbing_method[grab_key]]
-            
-            # Execute place sequence
-            self.move_single_joint(1, target_angle, record_action=False)     # Rotate to face target location
-            self.move_all_joints(place_method, record_action=False)          # Lean forward to place
-            self.open_gripper(record_action=False)                           # Open gripper
-            self.move_all_joints(return_method, record_action=False)         # Move back up
-            self.move_all_joints([90, 180, 0, 0, 90], record_action=False)  # Move back to grabber position
+        # Build movement sequences
+        place_method = [target_angle] + self.approach_method[approach_key] + [self.grabbing_method[grab_key]]
+        return_method = [target_angle] + self.return_method[return_key] + [self.grabbing_method[grab_key]]
+        
+        # Execute place sequence - pass callback to movements that need continuous recording
+        self.move_single_joint(1, target_angle, record_action=False, recording_callback=recording_callback)     # Rotate to face target location
+        self.move_all_joints(place_method, record_action=False, recording_callback=recording_callback)          # Lean forward to place
+        self.open_gripper(record_action=False)                           # Open gripper (no continuous recording needed)
+        self.move_all_joints(return_method, record_action=False, recording_callback=recording_callback)         # Move back up
+        self.move_all_joints([90, 180, 0, 0, 90], record_action=False, recording_callback=recording_callback)  # Move back to grabber position
     
     # ========== State Management ==========
     
@@ -296,56 +292,6 @@ class MovementController:
             self.logger.log_error(f"Error reading joint angles: {e}")
             return self.joint_angles
     
-    # ========== Recording Methods ==========
-    
-    def start_recording(self, annotation: str = "", task_description: str = ""):
-        """Start recording trajectory data."""
-        self.recording = True
-        self.current_trajectory_data = {
-            "joint_states": [],
-            "images": [],
-            "timestamps": [],
-            "annotation": annotation,
-            "task_description": task_description,
-            "start_time": time.time()
-        }
-        self.logger.log_info("Started trajectory recording")
-    
-    def stop_recording(self) -> Dict[str, Any]:
-        """Stop recording and return trajectory data."""
-        self.recording = False
-        self.current_trajectory_data["end_time"] = time.time()
-        self.current_trajectory_data["duration"] = (
-            self.current_trajectory_data["end_time"] - 
-            self.current_trajectory_data["start_time"]
-        )
-        
-        self.logger.log_info(f"Stopped trajectory recording - {len(self.current_trajectory_data['joint_states'])} data points")
-        return self.current_trajectory_data.copy()
-    
-    def _record_data_point(self, action_name: str = "", action_params: Dict = None):
-        """Record a single data point during trajectory recording."""
-        if not self.recording:
-            return
-        
-        try:
-            # Record joint state
-            joint_state = {
-                "timestamp": time.time(),
-                "joint_angles": self.joint_angles.copy(),
-                "gripper_closed": self.gripper_closed,
-                "is_moving": self.is_moving,
-                "action_name": action_name,
-                "action_params": action_params or {}
-            }
-            
-            # Add to trajectory data
-            self.current_trajectory_data["joint_states"].append(joint_state)
-            self.current_trajectory_data["timestamps"].append(time.time())
-            
-        except Exception as e:
-            self.logger.log_error(f"Error recording data point: {e}")
-    
     # ========== Status and Utility ==========
     
     def is_available(self) -> bool:
@@ -359,7 +305,6 @@ class MovementController:
             "is_moving": self.is_moving,
             "gripper_closed": self.gripper_closed,
             "torque_state": self.torque_state,
-            "recording": self.recording,
             "available": self.is_available()
         }
     
@@ -379,9 +324,7 @@ class MovementController:
     def cleanup(self):
         """Cleanup movement controller resources."""
         try:
-            # Stop any recording
-            if self.recording:
-                self.stop_recording()
+            # Recording is now handled at interface level, no cleanup needed here
             
             # Disable torque
             if self.arm and self.torque_state:

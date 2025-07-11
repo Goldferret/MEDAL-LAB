@@ -56,16 +56,23 @@ def require_robot_ready(func):
     """Decorator to ensure robot is ready and manage movement state at node level."""
     @wraps(func)
     def wrapper(self, *args, **kwargs):
+        # Check robot interface exists
         if self.robot_interface is None:
             return ActionFailed(errors="Robot interface not initialized")
         
-        if self.robot_interface.is_moving:
-            return ActionFailed(errors="Robot is already moving")
+        # Check movement controller exists and is available
+        if not hasattr(self.robot_interface, 'movement_controller') or not self.robot_interface.movement_controller:
+            return ActionFailed(errors="Robot movement controller not found")
         
+        # Check if movement controller is available (has arm hardware)
         if not self.robot_interface.movement_controller.is_available():
             return ActionFailed(errors="Robot movement controller not available")
         
-        # Set moving state at node level
+        # Check if robot is already moving (like old expert node)
+        if getattr(self.robot_interface.movement_controller, 'is_moving', False):
+            return ActionFailed(errors="Robot is already moving")
+        
+        # Set moving state at movement controller level (like old expert node)
         self.robot_interface.movement_controller.is_moving = True
         try:
             return func(self, *args, **kwargs)
@@ -99,21 +106,21 @@ class DofbotModularNode(RestNode):
         except Exception as e:
             self.logger.log_error(f"Failed to initialize robot interface: {e}")
     
-    def state_handler(self) -> dict[str, Any]:
-        """Report current device state for MADSci framework monitoring and integration.
+    def state_handler(self) -> None:
+        """Update the node's public-facing state information.
         
-        Returns:
-            Dictionary containing current robot and system state
+        This method updates self.node_state which is returned by the /state endpoint.
         """
         if not self.robot_interface:
-            return {
+            self.node_state = {
                 "status": "initializing",
                 "device_ready": False,
                 "error": "Robot interface not initialized"
             }
+            return
         
         try:
-            return {
+            self.node_state = {
                 # Core robot state
                 "joint_angles": self.robot_interface.joint_angles,
                 "is_moving": self.robot_interface.is_moving,
@@ -135,8 +142,8 @@ class DofbotModularNode(RestNode):
             }
             
         except Exception as e:
-            self.logger.log_error(f"Error getting robot state: {e}")
-            return {
+            self.logger.log_error(f"Error updating robot state: {e}")
+            self.node_state = {
                 "status": "error",
                 "device_ready": False,
                 "error": str(e),

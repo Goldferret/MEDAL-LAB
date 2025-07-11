@@ -4,6 +4,29 @@ This directory contains standalone diagnostic, calibration, and testing tools fo
 
 ## Tools Overview
 
+### 🧪 Performance Testing Tools
+
+#### `test_10hz_recording.py`
+**Purpose:** Test the camera's ability to consistently capture synchronized RGB and depth data at 10Hz
+
+**Features:**
+- Tests 50 consecutive frame captures at 10Hz
+- Monitors queue status and frame availability
+- Measures actual FPS vs target 10Hz
+- Reports success rate and identifies bottlenecks
+- Essential for validating robot recording workflows
+
+**Usage:**
+```bash
+cd /path/to/MEDAL-LAB
+python3 tools/test_10hz_recording.py
+```
+
+**Expected Results:**
+- Success rate: 94%+ (47+ successful captures out of 50)
+- Actual FPS: ~10.0
+- Queue stability: ~20-21 frames consistently
+
 ### 🔧 Hardware Diagnostic Tools
 
 #### `diagnose_orbbec_device.py`

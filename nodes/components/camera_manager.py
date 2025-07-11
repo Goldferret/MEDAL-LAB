@@ -11,6 +11,7 @@ Handles all camera-related operations including:
 import cv2
 import numpy as np
 import time
+import datetime
 import json
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
@@ -20,7 +21,7 @@ from functools import wraps
 
 # Try to import Orbbec SDK
 try:
-    from pyorbbecsdk import Pipeline, Config, OBSensorType, OBFormat, FrameSet, OBError
+    from pyorbbecsdk import Pipeline, Config, OBSensorType, OBFormat, FrameSet, OBError, OBAlignMode
     ORBBEC_SDK_AVAILABLE = True
 except ImportError:
     ORBBEC_SDK_AVAILABLE = False
@@ -30,6 +31,7 @@ except ImportError:
     OBFormat = None
     FrameSet = None
     OBError = None
+    OBAlignMode = None
 
 
 def require_valid_frame(func):
@@ -73,8 +75,7 @@ class CameraManager:
         self.orbbec_pipeline = None
         self.orbbec_config = None
         self._frame_callback_active = False
-        self._frameset_queue = Queue(maxsize=10)
-        self._simple_capture = None  # For simple RGB capture
+        self._frameset_queue = Queue(maxsize=30)  # Increased from 10 to 30 for 10Hz recording
         
         # Initialize camera if available
         if ORBBEC_SDK_AVAILABLE:
@@ -95,13 +96,48 @@ class CameraManager:
         self._setup_color_stream()
         self._setup_depth_stream()
         
+        # Enable frame synchronization if supported (optional for this device)
+        try:
+            self.orbbec_pipeline.enable_frame_sync()
+            self.logger.log_info("Frame synchronization enabled")
+        except Exception as e:
+            self.logger.log_info("Frame sync not supported - using alignment only")
+        
+        # Set alignment mode for better RGB-Depth correspondence (more important than sync)
+        try:
+            # OBAlignMode is imported with the * import from pyorbbecsdk
+            self.orbbec_config.set_align_mode(OBAlignMode.HW_MODE)  # Hardware alignment if available
+            self.logger.log_info("Hardware alignment enabled")
+        except Exception as e:
+            try:
+                self.orbbec_config.set_align_mode(OBAlignMode.SW_MODE)  # Software fallback
+                self.logger.log_info("Software alignment enabled")
+            except Exception as e2:
+                self.logger.log_info("Alignment not available - using raw frames")
+        
         # Start pipeline with callback
         self.orbbec_pipeline.start(self.orbbec_config, self._on_frame_callback)
         self._frame_callback_active = True
-        self.logger.log_info("Orbbec camera pipeline started successfully")
+        
+        # Pipeline warmup - wait for stable frame production
+        self.logger.log_info("Warming up camera pipeline...")
+        warmup_start = time.time()
+        
+        # Wait for queue to fill up and stabilize
+        target_warmup_frames = 10  # Wait for 10 frames to ensure stability
+        while self._frameset_queue.qsize() < target_warmup_frames and (time.time() - warmup_start) < 5.0:
+            time.sleep(0.1)  # Wait 100ms between checks
+        
+        # Additional stability wait - let a few more frames accumulate
+        time.sleep(0.5)
+        
+        warmup_time = time.time() - warmup_start
+        queue_size = self._frameset_queue.qsize()
+        self.logger.log_info(f"Camera pipeline ready after {warmup_time:.1f}s with {queue_size} frames queued")
+        self.logger.log_info("Orbbec camera pipeline started successfully with 10Hz optimization")
     
     def _setup_color_stream(self):
-        """Setup color stream with fallback options."""
+        """Setup color stream optimized for 10Hz recording."""
         color_profiles = self.orbbec_pipeline.get_stream_profile_list(OBSensorType.COLOR_SENSOR)
         if not color_profiles or color_profiles.get_count() == 0:
             self.logger.log_error("No color profiles available")
@@ -109,11 +145,13 @@ class CameraManager:
         
         self.logger.log_debug(f"Found {color_profiles.get_count()} color profiles")
         
-        # Try different profile configurations in order of preference
+        # Optimized profile configurations for 10Hz recording
+        # Based on DaBai DCW2 specs: RGB 1920×1080 @ 5/10/15/30 fps
         profile_configs = [
-            {"width": 640, "height": 480, "format": OBFormat.RGB, "fps": 15},
-            {"width": 640, "height": 480, "format": OBFormat.RGB, "fps": 10},
-            {"width": 640, "height": 0, "format": OBFormat.RGB, "fps": 30},  # Any height
+            {"width": 1920, "height": 1080, "format": OBFormat.MJPG, "fps": 15},  # Optimal for 10Hz
+            {"width": 1920, "height": 1080, "format": OBFormat.MJPG, "fps": 10},  # Exact match
+            {"width": 640, "height": 480, "format": OBFormat.RGB, "fps": 15},     # Lower res fallback
+            {"width": 640, "height": 480, "format": OBFormat.RGB, "fps": 10},     # Lower res exact
         ]
         
         color_profile = self._try_profile_configs(color_profiles, profile_configs, "color")
@@ -134,7 +172,7 @@ class CameraManager:
             self.logger.log_error("No suitable color profile found")
     
     def _setup_depth_stream(self):
-        """Setup depth stream with fallback options."""
+        """Setup depth stream optimized for 10Hz recording."""
         depth_profiles = self.orbbec_pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
         if not depth_profiles or depth_profiles.get_count() == 0:
             self.logger.log_error("No depth profiles available")
@@ -142,11 +180,13 @@ class CameraManager:
         
         self.logger.log_debug(f"Found {depth_profiles.get_count()} depth profiles")
         
-        # Try different profile configurations in order of preference
+        # Optimized profile configurations for 10Hz recording
+        # Based on DaBai DCW2 specs: Depth 640×400 @ 5/10/15 fps
         profile_configs = [
-            {"width": 640, "height": 400, "format": OBFormat.Y11, "fps": 15},
-            {"width": 640, "height": 400, "format": OBFormat.Y12, "fps": 15},
-            {"width": 640, "height": 0, "format": OBFormat.Y16, "fps": 30},  # Any height
+            {"width": 640, "height": 400, "format": OBFormat.Y16, "fps": 15},  # Optimal for 10Hz
+            {"width": 640, "height": 400, "format": OBFormat.Y16, "fps": 10},  # Exact match
+            {"width": 640, "height": 400, "format": OBFormat.Y11, "fps": 15},  # Alternative format
+            {"width": 640, "height": 400, "format": OBFormat.Y12, "fps": 15},  # Alternative format
         ]
         
         depth_profile = self._try_profile_configs(depth_profiles, profile_configs, "depth")
@@ -192,13 +232,27 @@ class CameraManager:
     
     @handle_camera_errors("frame callback", return_value=None)
     def _on_frame_callback(self, frames: FrameSet):
-        """Callback for processing incoming frames from Orbbec camera."""
-        if not self._frame_callback_active:
+        """Optimized callback for processing incoming frames from Orbbec camera."""
+        if not self._frame_callback_active or frames is None:
             return
         
-        # Add frames to queue (non-blocking)
-        if not self._frameset_queue.full():
+        # Optimized queue management for 10Hz recording
+        # Keep queue at ~70% capacity to ensure frames are always available
+        target_queue_size = int(self._frameset_queue.maxsize * 0.7)  # ~21 frames
+        
+        # If queue is above target, remove oldest frames to make room
+        while self._frameset_queue.qsize() >= target_queue_size:
+            try:
+                self._frameset_queue.get_nowait()  # Remove oldest frame
+            except Empty:
+                break
+        
+        # Add new frameset (non-blocking)
+        try:
             self._frameset_queue.put_nowait(frames)
+        except:
+            # Queue still full somehow, skip this frame
+            pass
     
     @require_valid_frame
     @handle_camera_errors("frame conversion", return_value=None)
@@ -235,121 +289,88 @@ class CameraManager:
         
         return image
     
-    @handle_camera_errors("RGB image capture", return_value=None)
-    def capture_rgb_image(self) -> Optional[np.ndarray]:
-        """Capture a single RGB image from the always-on camera pipeline.
+    @handle_camera_errors("depth data capture", return_value=(None, None, None, None))
+    def capture_synchronized_data(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
+        """Capture synchronized RGB, depth, and point cloud data from single frameset.
+        
+        This is the standardized interface method for recording and other operations
+        that need complete camera data. Uses single frameset to ensure synchronization.
         
         Returns:
-            BGR image as numpy array or None if capture fails
+            Tuple of (rgb_image, depth_image, depth_colormap, point_cloud_data)
+            Any element can be None if capture failed or not available
         """
         if not ORBBEC_SDK_AVAILABLE or not self._frame_callback_active:
-            return None
+            return None, None, None, None
         
         try:
-            # Get frame from queue with timeout
-            frameset = self._frameset_queue.get(timeout=2.0)
+            # Get single frameset from queue with appropriate timeout for 10Hz recording
+            # 500ms timeout allows for occasional delays while maintaining 10Hz performance
+            frameset = self._frameset_queue.get(timeout=0.5)  # 500ms timeout
             if frameset is None:
-                return None
+                return None, None, None, None
             
+            # Extract all data from the same synchronized frameset
+            rgb_image = None
+            depth_image = None
+            depth_colormap = None
+            point_cloud_data = None
+            
+            # Get RGB frame
             color_frame = frameset.get_color_frame()
-            if not color_frame:
-                return None
+            if color_frame:
+                rgb_image = self.frame_to_bgr_image(color_frame)
             
-            return self.frame_to_bgr_image(color_frame)
-            
-        except Empty:
-            self.logger.log_warning("No frames available in queue")
-            return None
-    
-    @handle_camera_errors("simple frame capture", return_value=None)
-    def capture_frame_simple(self) -> Optional[np.ndarray]:
-        """Capture frame using simple OpenCV VideoCapture (Yahboom's approach).
-        
-        This is more reliable for basic RGB capture without depth.
-        
-        Returns:
-            BGR image as numpy array or None if capture fails
-        """
-        if self._simple_capture is None:
-            self._simple_capture = cv2.VideoCapture(0)
-            self._simple_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self._simple_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            self.logger.log_info("Initialized simple camera capture")
-        
-        ret, frame = self._simple_capture.read()
-        return frame if ret else None
-    
-    @handle_camera_errors("depth data capture", return_value=(None, None, None))
-    def capture_depth_data(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
-        """Capture depth data from Orbbec camera.
-        
-        Returns:
-            Tuple of (depth_image, depth_colormap, point_cloud) or (None, None, None) if failed
-        """
-        if not ORBBEC_SDK_AVAILABLE or not self._frame_callback_active:
-            return None, None, None
-        
-        try:
-            # Get frame from queue
-            frameset = self._frameset_queue.get(timeout=2.0)
-            if frameset is None:
-                return None, None, None
-            
+            # Get depth frame and process all depth-related data
             depth_frame = frameset.get_depth_frame()
-            if not depth_frame:
-                return None, None, None
+            if depth_frame:
+                # Convert depth frame to numpy array
+                width = depth_frame.get_width()
+                height = depth_frame.get_height()
+                depth_data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
+                depth_image = depth_data.reshape((height, width))
+                
+                # Create colorized depth map
+                depth_normalized = cv2.normalize(depth_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                depth_colormap = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
+                
+                # Generate point cloud if we have both color and depth
+                if color_frame and depth_frame:
+                    try:
+                        # Get camera parameters for point cloud generation
+                        camera_param = self._get_camera_param()
+                        if camera_param:
+                            # Use Orbbec's built-in point cloud generation
+                            points = frameset.get_point_cloud(camera_param)
+                            if points is not None and len(points) > 0:
+                                # Convert to numpy array format
+                                point_cloud_data = np.array([(p.x, p.y, p.z) for p in points], dtype=np.float32)
+                    except Exception as e:
+                        # Point cloud generation failed, continue without it
+                        pass
             
-            # Convert to numpy array
-            depth_data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
-            depth_image = depth_data.reshape((depth_frame.get_height(), depth_frame.get_width()))
-            
-            # Create a colorized version of the depth map for visualization
-            depth_normalized = cv2.normalize(depth_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-            depth_colormap = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
-            
-            # Generate point cloud (simplified version)
-            point_cloud = self._generate_point_cloud_simple(depth_image)
-            
-            return depth_image, depth_colormap, point_cloud
+            return rgb_image, depth_image, depth_colormap, point_cloud_data
             
         except Empty:
-            self.logger.log_warning("No frames available for depth capture")
-            return None, None, None
+            # No frames available - this is normal at 10Hz if camera is slower
+            return None, None, None, None
+        except Exception as e:
+            self.logger.log_error(f"Error in synchronized capture: {e}")
+            return None, None, None, None
     
-    @handle_camera_errors("point cloud generation", return_value=None)
-    def _generate_point_cloud_simple(self, depth_image: np.ndarray) -> Optional[np.ndarray]:
-        """Generate a simple point cloud from depth image.
-        
-        Args:
-            depth_image: Depth image as numpy array
-            
-        Returns:
-            Point cloud as numpy array or None if generation fails
-        """
-        # Use default camera parameters if calibration not available
-        fx, fy = 525.0, 525.0  # Default focal lengths
-        cx, cy = 320.0, 240.0  # Default principal point
-        depth_scale = 1000.0   # Default depth scale
-        
-        height, width = depth_image.shape
-        
-        # Create coordinate grids
-        u, v = np.meshgrid(np.arange(width), np.arange(height))
-        
-        # Convert depth image to meters
-        depth_meters = depth_image.astype(np.float32) / depth_scale
-        
-        # Calculate 3D coordinates
-        x = (u - cx) * depth_meters / fx
-        y = (v - cy) * depth_meters / fy
-        z = depth_meters
-        
-        # Stack coordinates and filter out invalid points
-        points = np.stack((x, y, z), axis=-1)
-        valid_mask = (depth_image > 0) & (depth_image < 10000)  # Filter reasonable depth values
-        point_cloud = points[valid_mask]
-        
-        return point_cloud
+    def _get_camera_param(self):
+        """Get camera parameters for point cloud generation."""
+        if not hasattr(self, '_camera_param'):
+            try:
+                if self.orbbec_pipeline:
+                    device = self.orbbec_pipeline.get_device()
+                    self._camera_param = device.get_camera_param()
+                    return self._camera_param
+            except Exception:
+                self._camera_param = None
+                return None
+        return self._camera_param
+    
     
     def load_camera_calibration(self) -> Dict[str, Any]:
         """Load camera calibration parameters.
@@ -404,10 +425,6 @@ class CameraManager:
         if self.orbbec_pipeline:
             self.orbbec_pipeline.stop()
             self.logger.log_info("Orbbec camera pipeline stopped")
-        
-        if self._simple_capture:
-            self._simple_capture.release()
-            self.logger.log_info("Simple camera capture released")
     
     def cleanup(self):
         """Cleanup all camera resources."""
@@ -422,18 +439,73 @@ class CameraManager:
         
         self.logger.log_info("Camera manager cleanup completed")
     
+    def save_debug_frame(self, bgr_image: np.ndarray, filename_prefix: str, data_path: str = "./captures") -> bool:
+        """Save debug frame for analysis.
+        
+        Args:
+            bgr_image: BGR image to save
+            filename_prefix: Prefix for the filename (e.g., "scan_debug_pos180_attempt1")
+            data_path: Directory to save the image
+            
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        try:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+            frame_filename = f"{filename_prefix}_{timestamp}.jpg"
+            frame_path = Path(data_path) / frame_filename
+            frame_path.parent.mkdir(exist_ok=True)
+            cv2.imwrite(str(frame_path), bgr_image)
+            self.logger.log_info(f"Saved debug frame: {frame_filename}")
+            return True
+        except Exception as e:
+            self.logger.log_warning(f"Failed to save debug frame: {e}")
+            return False
+    
+    def save_color_mask_debug(self, bgr_image: np.ndarray, color: str, filename_prefix: str, 
+                             vision_detector, data_path: str = "./captures") -> bool:
+        """Save color mask for debugging color detection.
+        
+        Args:
+            bgr_image: Original BGR image
+            color: Color to create mask for
+            filename_prefix: Prefix for the filename (e.g., "color_mask_red_pos180_attempt1")
+            vision_detector: Vision detector instance for creating masks
+            data_path: Directory to save the mask
+            
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        try:
+            # Convert to HSV for color detection
+            hsv_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2HSV)
+            
+            # Create color mask using vision detector
+            color_mask = vision_detector.create_color_mask(hsv_image, color)
+            
+            # Create a 3-channel version for saving (white mask on black background)
+            color_mask_bgr = cv2.cvtColor(color_mask, cv2.COLOR_GRAY2BGR)
+            
+            # Save the mask
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+            mask_filename = f"{filename_prefix}_{timestamp}.jpg"
+            mask_path = Path(data_path) / mask_filename
+            mask_path.parent.mkdir(exist_ok=True)
+            cv2.imwrite(str(mask_path), color_mask_bgr)
+            self.logger.log_info(f"Saved color mask: {mask_filename}")
+            return True
+            
+        except Exception as e:
+            self.logger.log_warning(f"Failed to save color mask: {e}")
+            return False
+    
     def is_available(self) -> bool:
         """Check if camera is available and working.
         
         Returns:
             True if camera is available, False otherwise
         """
-        if ORBBEC_SDK_AVAILABLE and self._frame_callback_active:
-            return True
-        elif self._simple_capture and self._simple_capture.isOpened():
-            return True
-        else:
-            return False
+        return ORBBEC_SDK_AVAILABLE and self._frame_callback_active
     
     def get_queue_size(self) -> int:
         """Get current frame queue size for debugging.

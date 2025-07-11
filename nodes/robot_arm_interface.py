@@ -11,6 +11,7 @@ Coordinates all robot components and provides high-level functionality:
 import cv2
 import time
 import datetime
+import json
 import numpy as np
 from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
@@ -66,6 +67,10 @@ class RobotArmInterface:
         # Calibration Manager - handles calibration operations
         self.calibration_manager = CalibrationManager(logger, self.camera_manager, data_path)
         
+        # Recording state (interface-level coordination)
+        self._recording = False
+        self.current_trajectory_data = {}
+        
         self.logger.log_info("Robot arm interface initialized successfully")
     
     def __getattr__(self, name):
@@ -104,8 +109,32 @@ class RobotArmInterface:
     
     @property
     def recording(self) -> bool:
-        """Check if trajectory recording is active."""
-        return self.movement_controller.recording
+        """Check if trajectory recording is active at interface level."""
+        return getattr(self, '_recording', False)
+    
+    @recording.setter
+    def recording(self, value: bool):
+        """Set recording state at interface level."""
+        self._recording = value
+    
+    # ========== Camera Interface Methods ==========
+    
+    def capture_rgb_image(self) -> Optional[np.ndarray]:
+        """Capture RGB image using optimized synchronized method.
+        
+        Returns:
+            RGB image as numpy array or None if capture fails
+        """
+        rgb_image, _, _, _ = self.camera_manager.capture_synchronized_data()
+        return rgb_image
+    
+    def capture_synchronized_data(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
+        """Capture synchronized RGB, depth, and point cloud data.
+        
+        Returns:
+            Tuple of (rgb_image, depth_image, depth_colormap, point_cloud_data)
+        """
+        return self.camera_manager.capture_synchronized_data()
     
     # ========== High-Level Operations ==========
     
@@ -136,8 +165,27 @@ class RobotArmInterface:
                 self.movement_controller.move_single_joint(1, position, record_action=False)
                 positions_checked.append(position)
                 
-                # Wait for camera to stabilize
+                # Wait for robot to settle
                 time.sleep(scan_delay)
+                
+                # CRITICAL: Flush old frames from queue to ensure fresh frames from current position
+                self.logger.log_info(f"Flushing frame queue to get fresh frames from position {position}°")
+                flushed_count = 0
+                while not self.camera_manager._frameset_queue.empty() and flushed_count < 35:
+                    try:
+                        self.camera_manager._frameset_queue.get_nowait()
+                        flushed_count += 1
+                    except:
+                        break
+                self.logger.log_info(f"Flushed {flushed_count} old frames from queue")
+                
+                # Wait for adequate frames to populate queue from current position
+                # At 10Hz, need ~1.5s to get 15+ frames for reliable capture
+                self.logger.log_info("Waiting for queue to refill with fresh frames...")
+                time.sleep(1.5)  # Allow 15+ fresh frames to accumulate
+                
+                queue_size = self.camera_manager._frameset_queue.qsize()
+                self.logger.log_info(f"Queue refilled: {queue_size} frames available")
                 
                 # Check for target object at this position
                 detection_result = self._scan_at_position(position, object_type, color)
@@ -198,16 +246,24 @@ class RobotArmInterface:
             self.logger.log_info(f"Detection attempt {attempt + 1}/{detection_attempts} at position {position}°")
             
             try:
-                # Capture frame using simple method (more reliable)
-                bgr_image = self.camera_manager.capture_frame_simple()
-                if bgr_image is None:
+                # Capture frame using optimized synchronized method (same as recording workflow)
+                rgb_image, depth_image, depth_colormap, point_cloud = self.camera_manager.capture_synchronized_data()
+                if rgb_image is None:
                     self.logger.log_warning(f"Failed to capture frame (attempt {attempt + 1})")
                     continue
                 
+                # Note: capture_synchronized_data() already returns BGR format, no conversion needed
+                bgr_image = rgb_image  # Actually BGR format despite variable name
+                
                 self.logger.log_info(f"Successfully captured frame at position {position}°, attempt {attempt + 1}")
                 
-                # Save debug frame
-                self._save_debug_frame(bgr_image, position, attempt + 1)
+                # Save debug frame and color mask using camera manager
+                debug_prefix = f"scan_debug_pos{position}_attempt{attempt + 1}"
+                self.camera_manager.save_debug_frame(bgr_image, debug_prefix, self.data_path)
+                
+                mask_prefix = f"color_mask_{color}_pos{position}_attempt{attempt + 1}"
+                self.camera_manager.save_color_mask_debug(bgr_image, color, mask_prefix, 
+                                                        self.vision_detector, self.data_path)
                 
                 # Detect target object
                 detection_result = self.vision_detector.detect_target_object(bgr_image, object_type, color)
@@ -237,18 +293,6 @@ class RobotArmInterface:
                 continue
         
         return {"found": False}
-    
-    def _save_debug_frame(self, bgr_image: np.ndarray, position: int, attempt: int):
-        """Save debug frame for analysis."""
-        try:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-            frame_filename = f"scan_debug_pos{position}_attempt{attempt}_{timestamp}.jpg"
-            frame_path = Path(self.data_path) / frame_filename
-            frame_path.parent.mkdir(exist_ok=True)
-            cv2.imwrite(str(frame_path), bgr_image)
-            self.logger.log_info(f"Saved debug frame: {frame_filename}")
-        except Exception as e:
-            self.logger.log_warning(f"Failed to save debug frame: {e}")
     
     def _build_scan_result(self, success: bool, target_found: bool, **kwargs) -> Dict[str, Any]:
         """Build standardized scan result dictionary."""
@@ -327,10 +371,13 @@ class RobotArmInterface:
             if current_time - start_time > timeout:
                 break
             
-            # Capture frame using simple method
-            bgr_image = self.camera_manager.capture_frame_simple()
-            if bgr_image is None:
+            # Capture frame using optimized synchronized method
+            rgb_image, _, _, _ = self.camera_manager.capture_synchronized_data()
+            if rgb_image is None:
                 continue
+            
+            # Note: capture_synchronized_data() already returns BGR format
+            bgr_image = rgb_image  # Actually BGR format despite variable name
             
             # Detect colored object
             hsv_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2HSV)
@@ -490,6 +537,215 @@ class RobotArmInterface:
                 "calibration_manager": "initialized"
             }
         }
+    
+    # ========== Recording Methods (Interface-Level Coordination) ==========
+    
+    def start_recording(self, annotation: str = "", task_description: str = "") -> str:
+        """Start coordinated recording across movement and camera components.
+        
+        Args:
+            annotation: Text description of the trajectory being recorded
+            task_description: Detailed description of the task
+            
+        Returns:
+            ID of the trajectory being recorded
+        """
+        if self.recording:
+            self.logger.log_warning("Already recording a trajectory. Stop the current recording first.")
+            return self.current_trajectory_data.get("trajectory_id", "")
+        
+        # Generate unique experiment ID
+        experiment_id = f"experiment_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        experiment_dir = Path(self.data_path) / experiment_id
+        
+        # Create directory structure
+        experiment_dir.mkdir(exist_ok=True)
+        (experiment_dir / "rgb_images").mkdir(exist_ok=True)
+        (experiment_dir / "depth_images").mkdir(exist_ok=True)
+        (experiment_dir / "point_clouds").mkdir(exist_ok=True)
+        
+        # Initialize recording state
+        self.current_trajectory_data = {
+            "trajectory_id": experiment_id,
+            "annotation": annotation,
+            "task_description": task_description,
+            "start_time": time.time(),
+            "joint_states": [],
+            "actions": [],
+            "images": []
+        }
+        
+        self.recording = True
+        self.logger.log_info(f"Started recording experiment {experiment_id}")
+        return experiment_id
+    
+    def stop_recording(self) -> Optional[Dict[str, Any]]:
+        """Stop coordinated recording and save trajectory data.
+        
+        Returns:
+            Dictionary with trajectory data or None if no recording was active
+        """
+        if not self.recording:
+            self.logger.log_warning("No active recording to stop.")
+            return None
+        
+        experiment_id = self.current_trajectory_data["trajectory_id"]
+        experiment_dir = Path(self.data_path) / experiment_id
+        
+        # Add end time and duration
+        self.current_trajectory_data["end_time"] = time.time()
+        self.current_trajectory_data["duration"] = (
+            self.current_trajectory_data["end_time"] - self.current_trajectory_data["start_time"]
+        )
+        
+        # Save trajectory data
+        with open(experiment_dir / "trajectory_data.json", "w") as f:
+            json.dump(self.current_trajectory_data, f, indent=2)
+        
+        self.recording = False
+        self.logger.log_info(f"Stopped and saved experiment {experiment_id}")
+        
+        # Return copy of trajectory data for the caller
+        return self.current_trajectory_data.copy()
+    
+    def record_data_point(self, action_name: str = "", action_params: Dict = None):
+        """Record coordinated data point with movement and camera data.
+        
+        Args:
+            action_name: Name of the action being performed
+            action_params: Parameters of the action being performed
+        """
+        if not self.recording:
+            return
+        
+        try:
+            timestamp = time.time()
+            experiment_dir = Path(self.data_path) / self.current_trajectory_data["trajectory_id"]
+            frame_id = f"frame_{len(self.current_trajectory_data['joint_states']):06d}"
+            
+            # Get movement data from movement controller
+            joint_state = {
+                "timestamp": timestamp,
+                "joint_angles": self.movement_controller.joint_angles.copy(),
+                "gripper_closed": self.movement_controller.gripper_closed,
+                "is_moving": self.movement_controller.is_moving,
+                "action_name": action_name,
+                "action_params": action_params or {}
+            }
+            
+            # Capture images from camera manager
+            image_data = {"frame_id": frame_id, "timestamp": timestamp}
+            
+            try:
+                # Get synchronized camera data
+                rgb_image, depth_image, depth_colormap, point_cloud = self.camera_manager.capture_synchronized_data()
+                
+                # Save RGB image
+                if rgb_image is not None:
+                    rgb_path = experiment_dir / "rgb_images" / f"{frame_id}.jpg"
+                    cv2.imwrite(str(rgb_path), rgb_image)
+                    image_data["rgb_path"] = f"rgb_images/{frame_id}.jpg"
+                
+                # Save depth data
+                if depth_image is not None:
+                    depth_path = experiment_dir / "depth_images" / f"{frame_id}_depth.png"
+                    cv2.imwrite(str(depth_path), depth_image)
+                    image_data["depth_path"] = f"depth_images/{frame_id}_depth.png"
+                    
+                    # Save colorized depth map
+                    if depth_colormap is not None:
+                        colormap_path = experiment_dir / "depth_images" / f"{frame_id}_depth_colormap.jpg"
+                        cv2.imwrite(str(colormap_path), depth_colormap)
+                        image_data["depth_colormap_path"] = f"depth_images/{frame_id}_depth_colormap.jpg"
+                
+                # Save point cloud
+                if point_cloud is not None:
+                    pc_path = experiment_dir / "point_clouds" / f"{frame_id}_pointcloud.npy"
+                    np.save(str(pc_path), point_cloud)
+                    image_data["point_cloud_path"] = f"point_clouds/{frame_id}_pointcloud.npy"
+                    image_data["point_cloud_size"] = len(point_cloud)
+                    
+            except Exception as e:
+                self.logger.log_error(f"Error capturing images during recording: {e}")
+            
+            # Store coordinated data
+            self.current_trajectory_data["joint_states"].append(joint_state)
+            self.current_trajectory_data["images"].append(image_data)
+            
+        except Exception as e:
+            self.logger.log_error(f"Error recording data point: {e}")
+    
+    # ========== Movement Methods with Recording Integration ==========
+    
+    def move_single_joint(self, servo_id: int, angle: int, record_action: bool = True) -> None:
+        """Move single joint with optional continuous recording."""
+        # Create recording callback if recording is active
+        recording_callback = None
+        if self.recording and record_action:
+            recording_callback = lambda: self.record_data_point("move_single_joint", {"servo_id": servo_id, "angle": angle})
+        
+        # Call movement controller with callback
+        self.movement_controller.move_single_joint(servo_id, angle, record_action=False, recording_callback=recording_callback)
+    
+    def move_all_joints(self, angles: List[int], record_action: bool = True) -> None:
+        """Move all joints with optional continuous recording."""
+        # Create recording callback if recording is active
+        recording_callback = None
+        if self.recording and record_action:
+            recording_callback = lambda: self.record_data_point("move_all_joints", {"angles": angles})
+        
+        # Call movement controller with callback
+        self.movement_controller.move_all_joints(angles, record_action=False, recording_callback=recording_callback)
+    
+    def close_gripper(self, record_action: bool = True) -> None:
+        """Close gripper with optional recording."""
+        # Call movement controller (without recording since we handle it here)
+        self.movement_controller.close_gripper(record_action=False)
+        
+        # Record data point if recording is active
+        if self.recording and record_action:
+            self.record_data_point("close_gripper", {})
+    
+    def open_gripper(self, record_action: bool = True) -> None:
+        """Open gripper with optional recording."""
+        # Call movement controller (without recording since we handle it here)
+        self.movement_controller.open_gripper(record_action=False)
+        
+        # Record data point if recording is active
+        if self.recording and record_action:
+            self.record_data_point("open_gripper", {})
+    
+    def pick_from_source(self, source_angle: int, approach_key: str, return_key: str, grab_key: str, record_action: bool = True) -> None:
+        """Pick from source with optional continuous recording."""
+        # Create recording callback if recording is active
+        recording_callback = None
+        if self.recording and record_action:
+            recording_callback = lambda: self.record_data_point("pick_from_source", {
+                "source_angle": source_angle,
+                "approach_key": approach_key,
+                "return_key": return_key,
+                "grab_key": grab_key
+            })
+        
+        # Call movement controller with callback
+        self.movement_controller.pick_from_source(source_angle, approach_key, return_key, grab_key, record_action=False, recording_callback=recording_callback)
+    
+    def place_at_target(self, target_angle: int, approach_key: str, return_key: str, grab_key: str, record_action: bool = True) -> None:
+        """Place at target with optional continuous recording."""
+        # Create recording callback if recording is active
+        recording_callback = None
+        if self.recording and record_action:
+            recording_callback = lambda: self.record_data_point("place_at_target", {
+                "target_angle": target_angle,
+                "approach_key": approach_key,
+                "return_key": return_key,
+                "grab_key": grab_key
+            })
+        
+        # Call movement controller with callback
+        self.movement_controller.place_at_target(target_angle, approach_key, return_key, grab_key, record_action=False, recording_callback=recording_callback)
+    
+    # ========== Cleanup ==========
     
     def cleanup(self):
         """Cleanup all components."""

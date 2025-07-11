@@ -16,9 +16,9 @@ workcell_client = WorkcellClient(
 )
 
 # Current location of item (angle)
-current_location = 90
+current_location = 180
 # Next location of item (angle)
-next_location = 90
+next_location = 180
 # Approach method, Retreat/Return method, and Grab orientation (in order)
 movement_keys = ["directly_above", "directly_above", "horizontal"]
 

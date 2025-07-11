@@ -23,7 +23,7 @@ wf_def = WorkflowDefinition(
       node="DOFBOT_Pro_1", # Must exist in workcell nodes
       action="transfer",
       args={
-        "locations": [0, 0],
+        "locations": [180, 180],
         "movement_keys": ["directly_above", "directly_above", "horizontal"] # Apporach, Return, and Grab methods (in order)
       }
     )

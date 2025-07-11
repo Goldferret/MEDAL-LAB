@@ -90,13 +90,16 @@ class CalibrationManager:
             self.logger.log_info("Move the checkerboard to different positions and angles between captures")
             
             while captured_images < num_images and failed_attempts < max_failed_attempts:
-                # Capture image
-                img = self.camera_manager.capture_rgb_image()
-                if img is None:
+                # Capture image using optimized synchronized method
+                rgb_img, _, _, _ = self.camera_manager.capture_synchronized_data()
+                if rgb_img is None:
                     failed_attempts += 1
                     self.logger.log_warning(f"Failed to capture image (attempt {failed_attempts})")
                     time.sleep(0.5)
                     continue
+                
+                # Note: capture_synchronized_data() already returns BGR format
+                img = rgb_img  # Actually BGR format despite variable name
                 
                 # Convert to grayscale
                 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -331,11 +334,13 @@ class CalibrationManager:
             self.logger.log_info(f"Testing calibration accuracy with {num_test_images} images...")
             
             for i in range(num_test_images):
-                # Capture test image
-                img = self.camera_manager.capture_rgb_image()
-                if img is None:
+                # Capture test image using optimized synchronized method
+                rgb_img, _, _, _ = self.camera_manager.capture_synchronized_data()
+                if rgb_img is None:
                     continue
                 
+                # Note: capture_synchronized_data() already returns BGR format
+                img = rgb_img  # Actually BGR format despite variable name
                 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
                 
                 # Find checkerboard corners
