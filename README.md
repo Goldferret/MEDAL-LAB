@@ -42,13 +42,24 @@ MEDAL-LAB/
 ├── managers/                          # Workcell configuration
 │   └── example_wc.workcell.yaml          # Example workcell setup
 ├── nodes/                            # Robot nodes and hardware control
-│   ├── dofbot_expert_node.py             # Main DOFBOT Pro node with camera integration
+│   ├── dofbot_modular_node.py            # Modular DOFBOT Pro node (MADSci compliant)
+│   ├── robot_arm_config.py               # Centralized configuration management
+│   ├── robot_arm_interface.py            # High-level robot coordination
+│   ├── components/                        # Modular component architecture
+│   │   ├── camera_manager.py              # Camera operations and pipeline management
+│   │   ├── vision_detector.py             # Computer vision and object detection
+│   │   ├── movement_controller.py         # Robot movement and servo control
+│   │   └── calibration_manager.py         # Camera and system calibration
 │   ├── Arm_Lib.py                        # Low-level arm control library
 │   └── default.node.yaml                 # Default node configuration
 └── tools/                            # Hardware testing and diagnostic tools
+    ├── README.md                         # Comprehensive tools documentation
     ├── diagnose_orbbec_device.py         # Orbbec camera diagnostic script
     ├── fix_orbbec_device.sh              # Automated Orbbec device fix script
-    └── test_cameras_final.py             # Comprehensive camera testing script
+    ├── test_cameras_final.py             # Comprehensive camera testing script
+    ├── hsv_calibration_tool.py           # Interactive HSV color range calibration
+    ├── calibrate_depth_camera.py         # Interactive camera calibration tool
+    └── validate_camera_calibration.py    # Camera calibration validation tool
 ```
 
 ## 🚀 Quick Start
@@ -73,11 +84,18 @@ MEDAL-LAB uses a distributed architecture with three main components running on 
 
 ### 1. 🤖 Robot Node (NVIDIA Jetson Orin Nano)
 
-The robot node runs directly on the Jetson hardware and controls the DOFBOT Pro arm and camera.
+The robot node runs directly on the Jetson hardware and controls the DOFBOT Pro arm and camera using a **modular, component-based architecture** for better maintainability and MADSci compliance.
+
+**Architecture Features:**
+- **Modular Components**: Separate managers for camera, vision, movement, and calibration
+- **MADSci Compliant**: Full REST API with proper action patterns and state management
+- **Clean Separation**: Operational actions vs setup/maintenance tools
+- **Robust Error Handling**: Comprehensive safety checks and exception management
+- **Configurable**: Centralized configuration with environment variable support
 
 **Dependencies:**
 - Python 3.10 virtual environment (required for Jetson compatibility)
-- MADSci framework (`pip install madsci`)
+- MADSci framework (`pip install madsci.client madsci.node_module`)
 - OpenCV (`pip install opencv-python`)
 - NumPy (`pip install numpy`)
 - smbus2 (`pip install smbus2`) - for I2C servo communication
@@ -95,7 +113,7 @@ python3.10 -m venv madsci_env
 source madsci_env/bin/activate
 
 # Install core dependencies
-pip install madsci opencv-python numpy smbus2 python-dotenv
+pip install madsci.client madsci.node_module opencv-python numpy smbus2 python-dotenv
 
 # Install pyorbbecsdk-1.3.1 from source
 # 1. Download source code from GitHub releases
@@ -130,8 +148,15 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ```bash
 # From the pyorbbecsdk directory with PYTHONPATH set
 # Set NODE_DEFINITION and ROBOT_NODE_URL in your .env file, then:
-python /path/to/medal-lab/nodes/dofbot_expert_node.py
+python /path/to/medal-lab/nodes/dofbot_modular_node.py
 ```
+
+**Available Actions:**
+- **Movement**: `move_joint`, `move_all_joints`, `grabber_position`, `transfer`
+- **Vision**: `scan_for_target`, `center_on_target`
+- **Camera**: `capture_single_image`, `test_camera_capture`
+- **Recording**: `start_recording`, `stop_recording`
+- **Status**: `get_robot_status`, `reset_movement_state`
 
 ### 2. 🏭 Workcell Manager (Host Computer)
 
@@ -149,12 +174,6 @@ The workcell manager orchestrates workflows and manages the laboratory resources
   - Redis 7.4
   - PostgreSQL 17
   - MinIO (object storage)
-
-**Setup:**
-```bash
-# Start workcell manager with all required services
-./managers/start_workcell.sh
-```
 
 **Setup:**
 ```bash
@@ -204,7 +223,7 @@ python workflows/validate_calibration.py
 ### Basic Transfer Operation
 ```python
 # workflows/transfer.py
-# Demonstrates simple robot transfer between positions
+# Demonstrates simple robot transfer between positions using the modular node
 ```
 
 ### Data Collection with Recording
@@ -217,7 +236,7 @@ python workflows/validate_calibration.py
 ### Camera Calibration
 ```python
 # workflows/camera_calibration.py
-# Automated camera calibration workflow
+# Automated camera calibration workflow (deprecated - use tools/calibrate_depth_camera.py)
 ```
 
 ### Single Image Capture Workflow
@@ -228,10 +247,9 @@ python workflows/validate_calibration.py
 
 ### Single Image Capture
 The robot node includes a `capture_single_image` action that:
-- Temporarily starts the camera pipeline if needed
-- Captures a single RGB image
+- Captures a single RGB image from the camera
 - Saves it as `captures/capture_YYYYMMDD_HHMMSS.jpg`
-- Automatically stops the camera pipeline to conserve resources
+- Returns image metadata and file information
 
 **Note**: All experimental data (experiment folders and single captures) are automatically excluded from git commits to protect your personal research data.
 
@@ -246,12 +264,14 @@ The robot node includes a `capture_single_image` action that:
 
 ### Node Configuration
 - `nodes/default.node.yaml` - Default node settings
+- `nodes/robot_arm_config.py` - Centralized configuration with vision thresholds, HSV ranges, and movement parameters
 
 ### Workcell Configuration  
 - `managers/example_wc.workcell.yaml` - Workcell setup with nodes and locations
 
 ### Camera Calibration
 - `captures/example_camera_calibration.json` - Example calibration parameters
+- Use `tools/calibrate_depth_camera.py` for interactive calibration
 - Experiment data automatically saved to `captures/experiment_*/` directories
 - Single image captures saved as `captures/capture_*.jpg` files
 
@@ -262,11 +282,11 @@ The robot node includes a `capture_single_image` action that:
 │   Workcell Client   │    │  Workcell Manager   │    │    Robot Node       │
 │  (Development PC)   │    │   (Host Computer)   │    │  (Jetson Orin Nano) │
 │                     │    │                     │    │                     │
-│ • Docker Container  │◄──►│ • Docker Compose    │◄──►│ • Python 3.10       │
-│ • MADSci Image      │    │ • Workcell Manager  │    │ • DOFBOT Pro        │
-│ • Workflow Scripts   │    │ • Resource Manager  │    │ • Orbbec Camera     │
-│                     │    │ • Event Manager     │    │ • pyorbbecsdk       │
-│                     │    │ • Redis + MongoDB   │    │                     │
+│ • Docker Container  │◄──►│ • Docker Compose    │◄──►│ • Modular Node      │
+│ • MADSci Image      │    │ • Workcell Manager  │    │ • Component-Based   │
+│ • Workflow Scripts   │    │ • Resource Manager  │    │ • DOFBOT Pro        │
+│                     │    │ • Event Manager     │    │ • Orbbec Camera     │
+│                     │    │ • Redis + MongoDB   │    │ • MADSci Compliant  │
 └─────────────────────┘    └─────────────────────┘    └─────────────────────┘
 ```
 
@@ -299,26 +319,49 @@ Common camera issues and solutions:
 ## 📚 Documentation
 
 - **[Architecture Design](ARCHITECTURE.md)** - Complete framework architecture with hybrid digital twin design
+- **[Tools Documentation](tools/README.md)** - Comprehensive guide to all setup and diagnostic tools
 - **[MADSci Framework](https://github.com/AD-SDL/MADSci)** - Main framework repository
 
 ## 🔬 Current Features
 
-- **Autonomous Robot Control**: DOFBOT Pro integration with precise servo control
-- **Camera Integration**: Orbbec camera support with calibration workflows  
+- **Modular Robot Control**: Component-based DOFBOT Pro integration with clean architecture
+- **MADSci Compliance**: Full REST API with proper action patterns and state management
+- **Camera Integration**: Orbbec camera support with comprehensive calibration tools
+- **Vision System**: HSV-based object detection with configurable color ranges
 - **Workflow Orchestration**: MADSci-based workflow management and execution
 - **Data Collection**: Synchronized recording for AI training data generation
 - **Resource Management**: Comprehensive tracking of laboratory assets and states
 - **Event Logging**: Complete experimental traceability and debugging support
+- **Diagnostic Tools**: Comprehensive hardware testing and troubleshooting utilities
+
+## 🏗️ Architecture Improvements
+
+### Modular Node Design
+The robot node now uses a clean, component-based architecture:
+
+- **`dofbot_modular_node.py`**: MADSci-compliant REST interface with proper action patterns
+- **`robot_arm_interface.py`**: High-level coordination between components
+- **`components/`**: Modular components for camera, vision, movement, and calibration
+- **`robot_arm_config.py`**: Centralized configuration management
+
+### Benefits
+- **Maintainability**: Each component has a single responsibility
+- **Testability**: Components can be tested independently
+- **Extensibility**: Easy to add new capabilities
+- **MADSci Compliance**: Proper separation of operational actions vs setup tools
+- **Error Handling**: Comprehensive safety checks and exception management
 
 ## 🚧 Development Status
 
-This repository represents an active implementation of the MADSci framework architecture. While core functionality is operational, development is ongoing to implement the complete feature set described in the architecture documentation.
+This repository represents an active implementation of the MADSci framework architecture. The core functionality is operational with a robust, modular design.
 
 **Currently Implemented:**
-- Basic robot control and workflows
-- Camera integration and calibration
-- Data collection workflows
-- MADSci framework integration
+- Modular robot control with component-based architecture
+- Full MADSci compliance with proper REST API patterns
+- Camera integration and comprehensive calibration tools
+- Vision-based object detection and tracking
+- Data collection workflows with synchronized recording
+- Comprehensive diagnostic and setup tools
 
 **In Development:**
 - Complete hybrid digital twin implementation
@@ -330,6 +373,12 @@ This repository represents an active implementation of the MADSci framework arch
 
 This project is under active development. The architecture design in `ARCHITECTURE.md` provides the roadmap for full implementation.
 
+When contributing:
+- Follow the modular component architecture
+- Maintain MADSci compliance patterns
+- Add appropriate tools for setup/maintenance tasks
+- Update documentation for new features
+
 ## 📄 License
 
 [Add your license information here]
@@ -338,5 +387,6 @@ This project is under active development. The architecture design in `ARCHITECTU
 
 For issues related to:
 - **MADSci Framework**: See the main MADSci repository
-- **Hardware Setup**: Check the component setup sections above
+- **Hardware Setup**: Check the component setup sections and tools documentation
 - **Architecture Questions**: Review `ARCHITECTURE.md`
+- **Diagnostic Tools**: See `tools/README.md` for comprehensive troubleshooting guides
