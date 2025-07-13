@@ -76,30 +76,37 @@ python3 diagnose_orbbec_device.py
 
 ---
 
-### 📷 Camera Testing Tools
+### 🔄 Integration Testing Tools
 
-#### `test_cameras_final.py`
-**Purpose:** Comprehensive camera functionality testing and validation
+#### `test_recording_scanning_integration.py`
+**Purpose:** Test recording and scanning pipeline integration
 
 **Features:**
-- Live RGB and depth stream testing
-- Frame rate and resolution verification
-- Image quality assessment
-- Stream synchronization testing
-- Performance benchmarking
-- Multiple capture method testing
+- Pipeline switching validation
+- State management testing
+- Recording continuity verification
+- Scanning mode functionality
+- Error recovery testing
 
 **Usage:**
 ```bash
-python3 test_cameras_final.py
+python3 test_recording_scanning_integration.py
 ```
 
-**Test Coverage:**
-- Color stream functionality
-- Depth stream functionality
-- Frame synchronization
-- Capture reliability
-- Performance metrics
+#### `test_queue_clearing.py`
+**Purpose:** Test frame queue clearing during pipeline transitions
+
+**Features:**
+- Queue state monitoring
+- Stale frame detection
+- Fresh frame validation
+- Pipeline transition timing
+- Memory management verification
+
+**Usage:**
+```bash
+python3 test_queue_clearing.py
+```
 
 ---
 
@@ -186,7 +193,6 @@ python3 diagnose_orbbec_device.py
 ./fix_orbbec_device.sh
 
 # Test camera functionality
-python3 test_cameras_final.py
 ```
 
 ### 2. Camera Calibration
@@ -214,7 +220,6 @@ curl -X POST http://localhost:2000/action/scan_for_target \
 ### Camera Not Detected
 1. Run `diagnose_orbbec_device.py` for detailed analysis
 2. Apply fixes with `fix_orbbec_device.sh`
-3. Verify with `test_cameras_final.py`
 4. Check physical connections and USB power
 
 ### Poor Vision Performance
@@ -299,9 +304,7 @@ python3 diagnose_orbbec_device.py
 # No arguments - applies all common fixes
 ```
 
-### test_cameras_final.py
 ```bash
-python3 test_cameras_final.py
 # No arguments - runs comprehensive camera tests
 ```
 

@@ -16,7 +16,7 @@ workcell_client = WorkcellClient(
 )
 
 # Create workflow for single image capture
-_demo_workflow = WorkflowDefinition(
+demo_workflow = WorkflowDefinition(
     name=f"Single Image Capture",
     description=f"Capture a single image from the robot's camera",
     steps=[
@@ -24,22 +24,6 @@ _demo_workflow = WorkflowDefinition(
             name="Capture Single Image",
             node="DOFBOT_Pro_1",
             action="capture_single_image"
-        )
-    ]
-)
-
-demo_workflow = WorkflowDefinition(
-    name=f"Testing new action scanning",
-    description=f"Testing the new scanning action",
-    steps=[
-        StepDefinition(
-            name="Test Center Action",
-            node="DOFBOT_Pro_1",
-            action="scan_for_target",
-            args={
-                "object_type": "cube", # cube or rectangular_prism
-                "color": "blue"
-            }
         )
     ]
 )

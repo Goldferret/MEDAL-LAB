@@ -32,20 +32,25 @@ demo_workflow = WorkflowDefinition(
             node="DOFBOT_Pro_1",
             action="start_recording",
             args={
-                "annotation": f"Recording Demo: Transfer from {current_location} degrees to {next_location} degrees"
+                "annotation": f"Recording Demo: Go to \"Home Position\" and then attempt a scan_for_target action."
             }
         ),
         StepDefinition(
-            name="Execute Transfer",
+            name="Move to Grabber Position",
             node="DOFBOT_Pro_1",
-            action="transfer",
+            action="grabber_position"
+        ),
+        StepDefinition(
+            name="Scan for Target",
+            node="DOFBOT_Pro_1",
+            action="scan_for_target",
             args={
-                "locations": [current_location, next_location],
-                "movement_keys": movement_keys
+                "object_type": "cube", # cube or rectangular_prism
+                "color": "blue"
             }
         ),
         StepDefinition(
-            name="Stop Recording and Camera",
+            name="Stop Recording with Camera",
             node="DOFBOT_Pro_1",
             action="stop_recording"
         )
@@ -53,8 +58,6 @@ demo_workflow = WorkflowDefinition(
 )
 
 print("Starting recording workflow...")
-print(f"Transfer from {current_location} degrees to {next_location} degrees")
-print("This will record expert trajectory data for training")
 
 # Submit and run the recording workflow
 result = workcell_client.submit_workflow(workflow=demo_workflow)
@@ -62,4 +65,4 @@ result = workcell_client.submit_workflow(workflow=demo_workflow)
 print(f"Recording workflow completed!")
 print(f"Workflow ID: {result.workflow_id}")
 print(f"Status: {result.status}")
-print("Expert trajectory data has been recorded and saved.")
+print("Experiment data has been recorded and saved.")

@@ -138,6 +138,97 @@ class RobotArmInterface:
     
     # ========== High-Level Operations ==========
     
+    def scan_working_area(self, object_type: str, color: str) -> Dict[str, Any]:
+        """Scan the working area by rotating servo 1 to find specified target object.
+        
+        Args:
+            object_type: Type of object to find ('cube' or 'rectangular_prism')
+            color: Color of object to find ('red', 'green', 'blue', 'yellow')
+            
+        Returns:
+            Dictionary with scanning results
+        """
+        scan_positions = self.config.scan_positions
+        scan_delay = self.config.scan_delay
+        
+        self.logger.log_info(f"Starting working area scan for {color} {object_type}")
+        self.logger.log_info(f"Scan positions: {scan_positions}")
+        
+        start_time = time.time()
+        positions_checked = []
+        
+        try:
+            for position in scan_positions:
+                self.logger.log_info(f"Scanning at servo1={position}°...")
+                
+                # Move servo 1 to scanning position
+                self.movement_controller.move_single_joint(1, position, record_action=False)
+                positions_checked.append(position)
+                
+                # Wait for robot to settle
+                time.sleep(scan_delay)
+                
+                # CRITICAL: Flush old frames from queue to ensure fresh frames from current position
+                self.logger.log_info(f"Flushing frame queue to get fresh frames from position {position}°")
+                flushed_count = 0
+                while not self.camera_manager._frameset_queue.empty() and flushed_count < 35:
+                    try:
+                        self.camera_manager._frameset_queue.get_nowait()
+                        flushed_count += 1
+                    except:
+                        break
+                self.logger.log_info(f"Flushed {flushed_count} old frames from queue")
+                
+                # Wait for adequate frames to populate queue from current position
+                # At 10Hz, need ~1.5s to get 15+ frames for reliable capture
+                self.logger.log_info("Waiting for queue to refill with fresh frames...")
+                time.sleep(1.5)  # Allow 15+ fresh frames to accumulate
+                
+                queue_size = self.camera_manager._frameset_queue.qsize()
+                self.logger.log_info(f"Queue refilled: {queue_size} frames available")
+                
+                # Check for target object at this position
+                detection_result = self._scan_at_position(position, object_type, color)
+                
+                if detection_result["found"]:
+                    # Target found - return success
+                    scan_time = time.time() - start_time
+                    return self._build_scan_result(
+                        success=True,
+                        target_found=True,
+                        position=position,
+                        detection_data=detection_result,
+                        positions_checked=positions_checked,
+                        scan_time=scan_time,
+                        object_type=object_type,
+                        color=color
+                    )
+            
+            # Target not found after scanning all positions
+            scan_time = time.time() - start_time
+            self.logger.log_info(f"Scan completed - no {color} {object_type} found")
+            
+            return self._build_scan_result(
+                success=False,
+                target_found=False,
+                positions_checked=positions_checked,
+                scan_time=scan_time,
+                object_type=object_type,
+                color=color
+            )
+            
+        except Exception as e:
+            self.logger.log_error(f"Error during scan_working_area: {e}")
+            return self._build_scan_result(
+                success=False,
+                target_found=False,
+                error_message=f"Scanning failed: {str(e)}",
+                positions_checked=positions_checked,
+                scan_time=time.time() - start_time,
+                object_type=object_type,
+                color=color
+            )
+    
     def _scan_at_position(self, position: int, object_type: str, color: str) -> Dict[str, Any]:
         """Scan for target object at a specific position.
         
@@ -202,6 +293,50 @@ class RobotArmInterface:
                 continue
         
         return {"found": False}
+    
+    def _scan_at_position_with_fresh_callback(self, position: int, object_type: str, color: str) -> Dict[str, Any]:
+        """Enhanced scanning using dedicated callback for fresh frames."""
+        
+        # Move to position
+        self.movement_controller.move_single_joint(1, position, record_action=False)
+        
+        # Wait for movement to complete
+        time.sleep(self.config.scan_delay)
+        
+        # Activate scanning mode
+        if not self.camera_manager._activate_scanning_mode():
+            return {"found": False, "error": "Failed to activate scanning mode"}
+        
+        try:
+            # Get fresh frame immediately after movement
+            rgb_image, depth_image, _, _ = self.camera_manager.get_fresh_scanning_frame(timeout=3.0)
+            
+            if rgb_image is not None:
+                # Save debug frame
+                debug_prefix = f"fresh_scan_pos{position}_callback"
+                self.camera_manager.save_debug_frame(rgb_image, debug_prefix, self.data_path)
+                
+                # Save color mask for debugging
+                mask_prefix = f"fresh_color_mask_{color}_pos{position}_callback"
+                self.camera_manager.save_color_mask_debug(rgb_image, color, mask_prefix, 
+                                                        self.vision_detector, self.data_path)
+                
+                # Process the fresh frame
+                detection_result = self.vision_detector.detect_target_object(rgb_image, object_type, color)
+                
+                if detection_result and detection_result[1] > self.config.confidence_threshold:
+                    return {
+                        "found": True,
+                        "centroid": detection_result[0],
+                        "confidence": detection_result[1],
+                        "method": "fresh_callback"
+                    }
+            
+            return {"found": False, "error": "No fresh frame available"}
+            
+        finally:
+            # Always deactivate scanning mode
+            self.camera_manager._deactivate_scanning_mode()
     
     def scan_for_target_action_level(self, object_type: str, color: str) -> Dict[str, Any]:
         """Scan using action-level pipeline switching for guaranteed fresh frames."""
@@ -314,6 +449,60 @@ class RobotArmInterface:
         except Exception as e:
             self.logger.log_error(f"Error scanning at position {position}: {e}")
             return {"found": False, "error": f"Scanning error: {str(e)}"}
+    
+    def scan_for_target_with_fresh_frames(self, object_type: str, color: str) -> Dict[str, Any]:
+        """Scan using fresh callback approach for guaranteed frame accuracy."""
+        
+        scan_positions = self.config.scan_positions
+        self.logger.log_info(f"Starting fresh frame scan for {color} {object_type}")
+        
+        start_time = time.time()
+        positions_checked = []
+        
+        try:
+            for position in scan_positions:
+                self.logger.log_info(f"Fresh scanning at servo1={position}°...")
+                
+                # Scan at this position using fresh callback
+                detection_result = self._scan_at_position_with_fresh_callback(position, object_type, color)
+                positions_checked.append(position)
+                
+                if detection_result["found"]:
+                    # Target found - return success
+                    scan_time = time.time() - start_time
+                    return self._build_scan_result(
+                        success=True,
+                        target_found=True,
+                        position=position,
+                        detection_data=detection_result,
+                        positions_checked=positions_checked,
+                        scan_time=scan_time,
+                        object_type=object_type,
+                        color=color
+                    )
+            
+            # Target not found after scanning all positions
+            scan_time = time.time() - start_time
+            return self._build_scan_result(
+                success=False,
+                target_found=False,
+                positions_checked=positions_checked,
+                scan_time=scan_time,
+                object_type=object_type,
+                color=color
+            )
+            
+        except Exception as e:
+            self.logger.log_error(f"Error during fresh frame scan: {e}")
+            return self._build_scan_result(
+                success=False,
+                target_found=False,
+                error_message=f"Fresh frame scanning failed: {str(e)}",
+                positions_checked=positions_checked,
+                scan_time=time.time() - start_time,
+                object_type=object_type,
+                color=color
+            )
     
     def _build_scan_result(self, success: bool, target_found: bool, **kwargs) -> Dict[str, Any]:
         """Build standardized scan result dictionary."""
@@ -654,48 +843,42 @@ class RobotArmInterface:
                 "action_params": action_params or {}
             }
             
-            # Capture images from camera manager (skip during scanning)
+            # Capture images from camera manager
             image_data = {"frame_id": frame_id, "timestamp": timestamp}
             
-            # Check if scanning is active - if so, skip image capture but note it
-            if self.camera_manager.is_scanning_active():
-                image_data["scanning_active"] = True
-                image_data["note"] = "Image capture skipped - scanning in progress"
-                self.logger.log_debug(f"Skipping image capture for {frame_id} - scanning active")
-            else:
-                try:
-                    # Get synchronized camera data
-                    rgb_image, depth_image, depth_colormap, point_cloud = self.camera_manager.capture_synchronized_data()
+            try:
+                # Get synchronized camera data
+                rgb_image, depth_image, depth_colormap, point_cloud = self.camera_manager.capture_synchronized_data()
+                
+                # Save RGB image
+                if rgb_image is not None:
+                    rgb_path = experiment_dir / "rgb_images" / f"{frame_id}.jpg"
+                    cv2.imwrite(str(rgb_path), rgb_image)
+                    image_data["rgb_path"] = f"rgb_images/{frame_id}.jpg"
+                
+                # Save depth data
+                if depth_image is not None:
+                    depth_path = experiment_dir / "depth_images" / f"{frame_id}_depth.png"
+                    cv2.imwrite(str(depth_path), depth_image)
+                    image_data["depth_path"] = f"depth_images/{frame_id}_depth.png"
                     
-                    # Save RGB image
-                    if rgb_image is not None:
-                        rgb_path = experiment_dir / "rgb_images" / f"{frame_id}.jpg"
-                        cv2.imwrite(str(rgb_path), rgb_image)
-                        image_data["rgb_path"] = f"rgb_images/{frame_id}.jpg"
+                    # Save colorized depth map
+                    if depth_colormap is not None:
+                        colormap_path = experiment_dir / "depth_images" / f"{frame_id}_depth_colormap.jpg"
+                        cv2.imwrite(str(colormap_path), depth_colormap)
+                        image_data["depth_colormap_path"] = f"depth_images/{frame_id}_depth_colormap.jpg"
+                
+                # Save point cloud
+                if point_cloud is not None:
+                    pc_path = experiment_dir / "point_clouds" / f"{frame_id}_pointcloud.npy"
+                    np.save(str(pc_path), point_cloud)
+                    image_data["point_cloud_path"] = f"point_clouds/{frame_id}_pointcloud.npy"
+                    image_data["point_cloud_size"] = len(point_cloud)
                     
-                        # Save depth data
-                    if depth_image is not None:
-                        depth_path = experiment_dir / "depth_images" / f"{frame_id}_depth.png"
-                        cv2.imwrite(str(depth_path), depth_image)
-                        image_data["depth_path"] = f"depth_images/{frame_id}_depth.png"
-                        
-                        # Save colorized depth map
-                        if depth_colormap is not None:
-                            colormap_path = experiment_dir / "depth_images" / f"{frame_id}_depth_colormap.jpg"
-                            cv2.imwrite(str(colormap_path), depth_colormap)
-                            image_data["depth_colormap_path"] = f"depth_images/{frame_id}_depth_colormap.jpg"
-                    
-                    # Save point cloud
-                    if point_cloud is not None:
-                        pc_path = experiment_dir / "point_clouds" / f"{frame_id}_pointcloud.npy"
-                        np.save(str(pc_path), point_cloud)
-                        image_data["point_cloud_path"] = f"point_clouds/{frame_id}_pointcloud.npy"
-                        image_data["point_cloud_size"] = len(point_cloud)
-                        
-                except Exception as e:
-                    self.logger.log_error(f"Error capturing images during recording: {e}")
+            except Exception as e:
+                self.logger.log_error(f"Error capturing images during recording: {e}")
             
-            # Store coordinated data (joint data always recorded, images only when not scanning)
+            # Store coordinated data
             self.current_trajectory_data["joint_states"].append(joint_state)
             self.current_trajectory_data["images"].append(image_data)
             

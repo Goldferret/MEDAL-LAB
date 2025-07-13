@@ -35,7 +35,8 @@ def test_10hz_recording():
     test_captures_dir = project_root / "tools" / "test_captures"
     camera = CameraManager(logger, str(test_captures_dir))
     
-    if not camera.orbbec_pipeline:
+    # Check if camera is available using proper method
+    if not camera.is_camera_available():
         print("❌ Camera not available - cannot test")
         return False
     
@@ -43,7 +44,7 @@ def test_10hz_recording():
     
     # Wait a moment for pipeline warmup to complete
     print("⏳ Waiting for pipeline warmup...")
-    time.sleep(1.0)
+    time.sleep(2.0)  # Increased wait time for dual pipeline system
     
     # Test 10Hz capture for 5 seconds (50 frames)
     print("\n📸 Testing 10Hz capture for 5 seconds...")
@@ -56,17 +57,17 @@ def test_10hz_recording():
     for i in range(50):  # 5 seconds at 10Hz
         frame_start = time.time()
         
-        # Capture synchronized data
+        # Capture synchronized data using proper method
         rgb, depth, depth_colormap, point_cloud = camera.capture_synchronized_data()
         
         if rgb is not None and depth is not None:
             successful_captures += 1
-            queue_size = camera._frameset_queue.qsize()
+            queue_size = camera.get_queue_size()  # Use proper method
             print(f"✅ Frame {i+1:2d}: RGB={rgb.shape if rgb is not None else 'None'}, "
                   f"Depth={depth.shape if depth is not None else 'None'}, Queue={queue_size}")
         else:
             failed_captures += 1
-            queue_size = camera._frameset_queue.qsize()
+            queue_size = camera.get_queue_size()  # Use proper method
             print(f"❌ Frame {i+1:2d}: Failed to capture, Queue={queue_size}")
         
         # Maintain 10Hz timing
@@ -86,8 +87,8 @@ def test_10hz_recording():
     print(f"   Actual FPS: {actual_fps:.2f}")
     print(f"   Target FPS: 10.0")
     
-    # Check queue status
-    queue_size = camera._frameset_queue.qsize()
+    # Check final queue status using proper method
+    queue_size = camera.get_queue_size()
     queue_max = camera._frameset_queue.maxsize
     print(f"   Final queue size: {queue_size}/{queue_max}")
     

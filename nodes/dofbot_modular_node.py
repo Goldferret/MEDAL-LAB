@@ -165,6 +165,20 @@ class DofbotModularNode(RestNode):
             return ActionFailed(errors=f"Unsupported object type: {object_type}. Supported: {supported_objects}")
         return None
     
+    def _cleanup_on_failure(self, was_recording: bool, action_name: str = "action") -> None:
+        """Helper method to clean up resources when an action fails.
+        
+        Args:
+            was_recording: Whether recording was active before the action started
+            action_name: Name of the action for logging purposes
+        """
+        if was_recording:
+            try:
+                self.logger.log_info(f"{action_name} failed - stopping recording to prevent resource leaks")
+                self.robot_interface.stop_recording()
+            except Exception as cleanup_error:
+                self.logger.log_error(f"Failed to stop recording during {action_name} cleanup: {cleanup_error}")
+    
     # ========== Movement Actions ==========
     
     @action(name="move_joint", description="Move the robot's joint by the specified joint angle")
@@ -246,13 +260,12 @@ class DofbotModularNode(RestNode):
     
     # ========== Vision and Detection Actions ==========
     
-    @action(name="scan_for_target", description="Scan working area to find and face specified colored object")
+    @action(name="scan_for_target", description="Scan working area to find and face specified colored object using optimized pipeline switching")
     @require_robot_ready
-    def scan_for_target(self, 
-                       object_type: str = "cube",
-                       color: str = "red") -> ActionResult:
-        """Scan the working area to find and face a specified colored object."""
-        # Validate parameters using helpers
+    def scan_for_target(self, object_type: str = "cube", color: str = "red") -> ActionResult:
+        """Scan using action-level pipeline switching for guaranteed fresh frames and optimal performance."""
+        
+        # Validate parameters
         color_validation = self.validate_color(color)
         if color_validation:
             return color_validation
@@ -260,38 +273,46 @@ class DofbotModularNode(RestNode):
         object_validation = self.validate_object_type(object_type)
         if object_validation:
             return object_validation
+
+        # Check if recording was active before we started
+        was_recording = self.robot_interface.recording
         
         try:
             self.logger.log_info(f"Starting scan for {color} {object_type}")
             
-            # Turn on torque for servo movements
+            # Turn on torque
             self.robot_interface.change_torque_state()
             
-            # Move to starting position (leftmost scanning position)
-            self.logger.log_info("Moving to starting scan position...")
+            # Move to starting position
             self.robot_interface.move_all_joints(self.config.starting_scan_position, record_action=False)
             
-            # Perform the scanning
-            result = self.robot_interface.scan_working_area(object_type.lower(), color.lower())
+            # Perform action-level scanning (pipeline switching handled internally)
+            result = self.robot_interface.scan_for_target_action_level(object_type.lower(), color.lower())
             
-            # Turn off torque after scanning
+            # Turn off torque
             self.robot_interface.change_torque_state()
             
             if result["success"]:
-                self.logger.log_info(f"Successfully found {color} {object_type} at servo1={result['found_at_servo1_position']}°")
+                self.logger.log_info(f"Scan successful: found {color} {object_type}")
                 return ActionSucceeded(data=result)
             else:
-                self.logger.log_info(f"No {color} {object_type} found during scan")
+                # Scan completed but target not found - this is still a failure that should trigger cleanup
+                self.logger.log_info(f"Scan completed: no {color} {object_type} found")
+                self._cleanup_on_failure(was_recording, "scan_for_target")
                 return ActionFailed(errors=f"Target not found: {color} {object_type}", data=result)
                 
         except Exception as e:
-            # Make sure to turn off torque even if there's an exception
+            # Ensure torque is turned off
             try:
                 self.robot_interface.change_torque_state()
             except:
                 pass
-            self.logger.log_error(f"Error during scan_for_target: {e}")
-            return ActionFailed(errors=f"Scanning failed due to error: {str(e)}")
+            
+            # Clean up resources on exception
+            self._cleanup_on_failure(was_recording, "scan_for_target")
+            
+            self.logger.log_error(f"Error during scan: {e}")
+            return ActionFailed(errors=f"Scanning failed: {str(e)}")
     
     @action(name="center_on_target", description="Center camera on colored object using PID control")
     @require_robot_ready
@@ -306,6 +327,9 @@ class DofbotModularNode(RestNode):
         
         if timeout <= 0 or timeout > 300:  # Max 5 minutes
             return ActionFailed(errors="Timeout must be between 0 and 300 seconds")
+        
+        # Check if recording was active before we started
+        was_recording = self.robot_interface.recording
         
         try:
             self.logger.log_info(f"Starting center_on_target for {object_color} object (timeout: {timeout}s)")
@@ -323,7 +347,9 @@ class DofbotModularNode(RestNode):
                 self.logger.log_info(f"Successfully centered on {object_color} object")
                 return ActionSucceeded(data=result)
             else:
+                # Centering failed - this should trigger cleanup
                 self.logger.log_warning(f"Failed to center on {object_color} object: {result.get('reason', 'Unknown')}")
+                self._cleanup_on_failure(was_recording, "center_on_target")
                 return ActionFailed(errors=result.get("error_message", "Centering failed"), data=result)
                 
         except Exception as e:
@@ -332,6 +358,10 @@ class DofbotModularNode(RestNode):
                 self.robot_interface.change_torque_state()
             except:
                 pass
+            
+            # Clean up resources on exception
+            self._cleanup_on_failure(was_recording, "center_on_target")
+            
             self.logger.log_error(f"Error during center_on_target: {e}")
             return ActionFailed(errors=f"Centering failed due to error: {str(e)}")
     
