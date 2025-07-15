@@ -38,25 +38,26 @@ class RobotArmConfig(RestNodeConfig):
     
     # Vision detection thresholds (centralized from vision_detector)
     vision_thresholds: Dict[str, Any] = {
-        "min_area": 100,                    # Minimum contour area
-        "min_radius": 10,                   # Minimum circle radius (Yahboom)
+        "min_area": 500,                    # Increased from 100 - minimum contour area
+        "min_radius": 15,                   # Increased from 10 - minimum circle radius (Yahboom)
         "confidence_weights": (0.6, 0.4),  # Shape vs color confidence weighting
         "canny_thresholds": (50, 150),     # Edge detection thresholds
         "polygon_epsilon": 0.02,           # Polygon approximation factor
-        "rectangle_extent": 0.7,           # Minimum rectangle fill ratio
-        "aspect_ratio_square": (0.8, 1.2), # Square aspect ratio range
+        "rectangle_extent": 0.6,           # Lowered from 0.8 to 0.6 - minimum rectangle fill ratio (more permissive for real objects)
+        "aspect_ratio_square": (0.9, 1.1), # Tightened from (0.8, 1.2) - square aspect ratio range (more square)
         "morphology_iterations": 2,        # Erosion/dilation iterations
         "gaussian_kernel": (5, 5),         # Gaussian blur kernel size
+        "edge_margin": 50,                 # NEW: Minimum distance from image edges
     }
     
     # HSV color ranges (calibrated)
     color_hsv_ranges: Dict[str, HSVRanges] = {
-        "green": ((40, 65, 20), (91, 248, 88)),
-        "blue": ((100, 113, 16), (117, 255, 141)),
-        "yellow": ((15, 142, 91), (31, 255, 229)),
+        "green": ((41, 72, 0), (96, 255, 153)),
+        "blue": ((100, 122, 0), (118, 255, 192)),
+        "yellow": ((17, 97, 78), (32, 225, 247)),
         "red": [
-            ((0, 135, 39), (10, 255, 158)),
-            ((170, 135, 39), (179, 255, 178)),
+            ((0, 59, 46), (10, 255, 210)),
+            ((170, 59, 46), (179, 255, 211)),
         ]
     }
     

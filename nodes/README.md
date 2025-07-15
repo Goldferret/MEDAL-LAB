@@ -37,7 +37,8 @@ nodes/
     ├── camera_manager.py          # Dual-pipeline camera operations
     ├── vision_detector.py         # Computer vision and object detection
     ├── movement_controller.py     # Robot movement and servo control
-    └── calibration_manager.py     # Camera and system calibration
+    ├── calibration_manager.py     # Camera and system calibration
+    └── experiment_logger.py       # Experiment data logging and persistence
 ```
 
 ## 🔧 Component Architecture
@@ -86,17 +87,23 @@ nodes/
   - Comprehensive error handling and recovery
 
 #### `components/vision_detector.py` - Computer Vision
-- **Purpose**: Object detection and visual processing
+- **Purpose**: Advanced object detection and visual processing with hybrid approach
+- **Architecture**:
+  - **Hybrid Detection**: Combines Yahboom's proven methods with MEDAL-LAB precision
+  - **Multi-Stage Pipeline**: Preprocessing → Morphological ops → Detection → Validation
+  - **Enhanced Debugging**: Comprehensive debug visualization with actual object sizing
 - **Capabilities**:
   - HSV-based color detection with configurable ranges
-  - Object shape recognition (cube, rectangular prism)
-  - Debug visualization with mask and contour saving
-  - Adaptive thresholding and noise filtering
+  - Object shape recognition (cube, rectangular prism) with geometric validation
+  - Dual-range red color support (handles HSV hue wraparound)
+  - Real-time debug visualization with mask and contour saving
+  - Radius-based detection visualization (shows actual object size)
 - **Key Features**:
-  - Configurable HSV color ranges
-  - Automatic debug frame saving
-  - Robust contour detection and filtering
-  - Integration with camera pipeline system
+  - Configurable HSV color ranges with edge filtering
+  - Automatic debug frame saving with comprehensive metadata
+  - Robust contour detection with confidence scoring
+  - Integration with experiment logger for coordinated data flow
+  - Enhanced error handling with detailed logging
 
 #### `components/movement_controller.py` - Robot Movement
 - **Purpose**: Low-level robot movement and servo control
@@ -122,6 +129,24 @@ nodes/
   - Calibration data validation
   - Integration with camera system
   - Persistent calibration storage
+
+#### `components/experiment_logger.py` - Experiment Data Management
+- **Purpose**: Centralized experiment data logging and persistence
+- **Architecture**:
+  - **Coordinated Logging**: Integrates with all system components
+  - **Structured Data**: JSON-based experiment metadata and event logging
+  - **Debug Integration**: Automatic debug image saving with proper organization
+- **Capabilities**:
+  - Scanning event logging with comprehensive metadata
+  - Debug image saving with timestamped organization
+  - Experiment summary generation and persistence
+  - 10Hz recording coordination and trajectory data management
+- **Key Features**:
+  - JSON data persistence with structured schemas
+  - Automatic directory creation and file organization
+  - Integration with camera manager for synchronized data flow
+  - Error handling with graceful degradation
+  - Comprehensive logging for experiment reproducibility
 
 ### Configuration Management
 

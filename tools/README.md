@@ -180,6 +180,44 @@ python3 hsv_calibration_tool.py
 - Rectangular prisms
 - Custom colored objects
 
+**Advanced Calibration Workflow:**
+1. Select color to calibrate (R/G/B/Y keys)
+2. Click on objects to sample HSV values across different lighting
+3. For red: Use SPACEBAR to switch between dual HSV ranges (spans 0°-180° boundary)
+4. Adjust ranges with trackbars for fine-tuning
+5. Test detection across all colors (T key)
+6. Save calibration data (S key)
+
+----
+
+#### `position_cycler.py`
+**Purpose:** Cycles robot through scan positions for systematic HSV calibration
+
+**Features:**
+- Automated position cycling through [180°, 135°, 90°, 45°, 0°] servo angles
+- Direct Arm_Lib.py integration with proper torque management
+- Interactive Enter-to-advance interface for controlled calibration
+- Perfect companion tool for `hsv_calibration_tool.py`
+- Safe torque enable/disable on startup/shutdown
+
+**Usage:**
+```bash
+cd /path/to/MEDAL-LAB/tools
+python3 position_cycler.py
+```
+
+**Workflow:**
+1. Robot moves to first position [180, 110, 5, 0, 90]
+2. Press Enter to advance to next position in sequence
+3. Use with HSV calibration tool in parallel for comprehensive color sampling
+4. Quit safely with 'Q' - automatically disables robot torque
+
+**Integration with HSV Calibration:**
+- Run `position_cycler.py` in one terminal
+- Run `hsv_calibration_tool.py` in another terminal
+- Advance robot positions while sampling colors at each angle
+- Captures lighting variations across all robot viewing positions
+
 ---
 
 ## Quick Start Guide
@@ -337,6 +375,14 @@ Options:
 python3 hsv_calibration_tool.py
 # Interactive tool - no command line options
 # Use mouse and trackbars for calibration
+```
+
+### position_cycler.py
+```bash
+python3 position_cycler.py
+# Interactive tool - no command line options
+# Press Enter to cycle positions, Q to quit
+# Requires robot hardware connection
 ```
 
 ## Support and Maintenance

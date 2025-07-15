@@ -677,6 +677,37 @@ class CameraManager:
             self.logger.log_error(f"Error saving detection result: {e}")
             return False
     
+    def _save_hybrid_detection_summary(self, directory, filename, detection_result, color, object_type, timestamp):
+        """Save detection summary text file.
+        
+        Args:
+            directory: Directory path to save to
+            filename: Filename for the summary
+            detection_result: Detection result tuple or None
+            color: Target color
+            object_type: Target object type
+            timestamp: Timestamp for the detection
+        """
+        try:
+            with open(directory / filename, 'w') as f:
+                f.write(f"Hybrid Detection Summary\n")
+                f.write(f"========================\n")
+                f.write(f"Target: {color} {object_type}\n")
+                f.write(f"Timestamp: {timestamp}\n")
+                f.write(f"Detection successful: {detection_result is not None}\n")
+                
+                if detection_result:
+                    centroid, confidence = detection_result
+                    f.write(f"Position: {centroid}\n")
+                    f.write(f"Confidence: {confidence:.3f}\n")
+                else:
+                    f.write(f"No valid detection found\n")
+            
+            self.logger.log_debug(f"Saved hybrid detection summary: {filename}")
+        except Exception as e:
+            self.logger.log_error(f"Failed to save hybrid detection summary {filename}: {e}")
+    
+    
     
     @handle_camera_errors("frame callback", return_value=None)
     def _on_frame_callback(self, frames: FrameSet):
@@ -1020,66 +1051,6 @@ class CameraManager:
             
         except Exception as e:
             self.logger.log_debug(f"Could not update experiment metadata: {e}")
-    
-    def save_debug_frame(self, bgr_image: np.ndarray, filename_prefix: str, data_path: str = "./captures") -> bool:
-        """Save debug frame for analysis.
-        
-        Args:
-            bgr_image: BGR image to save
-            filename_prefix: Prefix for the filename (e.g., "scan_debug_pos180_attempt1")
-            data_path: Directory to save the image
-            
-        Returns:
-            True if saved successfully, False otherwise
-        """
-        try:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-            frame_filename = f"{filename_prefix}_{timestamp}.jpg"
-            frame_path = Path(data_path) / frame_filename
-            frame_path.parent.mkdir(exist_ok=True)
-            cv2.imwrite(str(frame_path), bgr_image)
-            self.logger.log_info(f"Saved debug frame: {frame_filename}")
-            return True
-        except Exception as e:
-            self.logger.log_warning(f"Failed to save debug frame: {e}")
-            return False
-    
-    def save_color_mask_debug(self, bgr_image: np.ndarray, color: str, filename_prefix: str, 
-                             vision_detector, data_path: str = "./captures") -> bool:
-        """Save color mask for debugging color detection.
-        
-        Args:
-            bgr_image: Original BGR image
-            color: Color to create mask for
-            filename_prefix: Prefix for the filename (e.g., "color_mask_red_pos180_attempt1")
-            vision_detector: Vision detector instance for creating masks
-            data_path: Directory to save the mask
-            
-        Returns:
-            True if saved successfully, False otherwise
-        """
-        try:
-            # Convert to HSV for color detection
-            hsv_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2HSV)
-            
-            # Create color mask using vision detector
-            color_mask = vision_detector.create_color_mask(hsv_image, color)
-            
-            # Create a 3-channel version for saving (white mask on black background)
-            color_mask_bgr = cv2.cvtColor(color_mask, cv2.COLOR_GRAY2BGR)
-            
-            # Save the mask
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-            mask_filename = f"{filename_prefix}_{timestamp}.jpg"
-            mask_path = Path(data_path) / mask_filename
-            mask_path.parent.mkdir(exist_ok=True)
-            cv2.imwrite(str(mask_path), color_mask_bgr)
-            self.logger.log_info(f"Saved color mask: {mask_filename}")
-            return True
-            
-        except Exception as e:
-            self.logger.log_warning(f"Failed to save color mask: {e}")
-            return False
     
     def is_available(self) -> bool:
         """Check if camera is available and working.

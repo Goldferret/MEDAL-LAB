@@ -287,7 +287,7 @@ class DofbotModularNode(RestNode):
             self.robot_interface.move_all_joints(self.config.starting_scan_position, record_action=False)
             
             # Perform action-level scanning (pipeline switching handled internally)
-            result = self.robot_interface.scan_for_target_action_level(object_type.lower(), color.lower())
+            result = self.robot_interface.scan_for_target(object_type.lower(), color.lower())
             
             # Turn off torque
             self.robot_interface.change_torque_state()
@@ -378,23 +378,23 @@ class DofbotModularNode(RestNode):
             if rgb_image is None:
                 return ActionFailed(errors="Failed to capture image - no frames available")
             
-            # Save image with timestamp
+            # Save image with timestamp using experiment logger
             import datetime
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"capture_{timestamp}.jpg"
             filepath = Path(self.config.data_collection_path) / filename
-            filepath.parent.mkdir(exist_ok=True)
             
-            import cv2
-            cv2.imwrite(str(filepath), rgb_image)
-            
-            self.logger.log_info(f"Image captured and saved: {filename}")
-            return ActionSucceeded(data={
-                "filename": filename,
-                "filepath": str(filepath),
-                "image_shape": rgb_image.shape,
-                "timestamp": timestamp
-            })
+            # Use experiment logger for consistent image saving
+            if self.robot_interface.experiment_logger.save_frame(rgb_image, str(filepath), "capture"):
+                self.logger.log_info(f"Image captured and saved: {filename}")
+                return ActionSucceeded(data={
+                    "filename": filename,
+                    "filepath": str(filepath),
+                    "image_shape": rgb_image.shape,
+                    "timestamp": timestamp
+                })
+            else:
+                return ActionFailed(errors=f"Failed to save captured image: {filename}")
             
         except Exception as e:
             self.logger.log_error(f"Error capturing image: {e}")
@@ -464,31 +464,23 @@ class DofbotModularNode(RestNode):
             return ActionFailed(errors="No recording in progress")
         
         try:
+            # Stop recording through robot interface (experiment logger handles saving)
             trajectory_data = self.robot_interface.stop_recording()
             
-            # Save trajectory data
-            import json
-            import datetime
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"trajectory_{timestamp}.json"
-            filepath = Path(self.config.data_collection_path) / filename
-            filepath.parent.mkdir(exist_ok=True)
-            
-            with open(filepath, 'w') as f:
-                json.dump(trajectory_data, f, indent=2, default=str)
-            
-            self.logger.log_info(f"Recording stopped and saved: {filename}")
-            self.logger.log_info(f"Recorded {len(trajectory_data['joint_states'])} data points")
-            
-            return ActionSucceeded(data={
-                "recording": False,
-                "filename": filename,
-                "filepath": str(filepath),
-                "data_points": len(trajectory_data['joint_states']),
-                "duration": trajectory_data.get('duration', 0),
-                "annotation": trajectory_data.get('annotation', ''),
-                "task_description": trajectory_data.get('task_description', '')
-            })
+            if trajectory_data:
+                self.logger.log_info(f"Recording stopped and saved by experiment logger")
+                self.logger.log_info(f"Recorded {len(trajectory_data['joint_states'])} data points")
+                
+                return ActionSucceeded(data={
+                    "recording": False,
+                    "experiment_id": trajectory_data.get('trajectory_id', ''),
+                    "data_points": len(trajectory_data['joint_states']),
+                    "duration": trajectory_data.get('duration', 0),
+                    "annotation": trajectory_data.get('metadata', {}).get('annotation', ''),
+                    "task_description": trajectory_data.get('metadata', {}).get('task_description', '')
+                })
+            else:
+                return ActionFailed(errors="Failed to stop recording - no trajectory data returned")
             
         except Exception as e:
             self.logger.log_error(f"Error stopping recording: {e}")

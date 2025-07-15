@@ -41,6 +41,26 @@ Workflow for capturing single images using the robot node's `capture_single_imag
 **Data Output:**
 - `captures/capture_YYYYMMDD_HHMMSS.jpg` - Single RGB image with timestamp
 
+### `move_to_position.py` - Precise Robot Positioning
+Workflow for moving the robot to specific joint angles using the MADSci workflow system. Demonstrates programmatic robot positioning with proper status reporting and error handling.
+
+**Key Features:**
+- Precise joint angle positioning [135, 110, 5, 0, 90]
+- MADSci workflow-based movement coordination
+- Comprehensive status reporting and error handling
+- Template for custom positioning workflows
+
+**Usage Example:**
+```python
+# Modify target_angles in the script for different positions
+target_angles = [135, 110, 5, 0, 90]  # [servo1, servo2, servo3, servo4, servo5]
+```
+
+**Integration:**
+- Uses `move_all_joints` action from robot node
+- Demonstrates proper MADSci workflow patterns
+- Shows error handling and status checking
+
 ## 🚀 Running Workflows
 
 ### Prerequisites

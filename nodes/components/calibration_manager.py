@@ -20,16 +20,18 @@ from typing import Dict, Any, List, Tuple, Optional
 class CalibrationManager:
     """Manages calibration operations for DOFBOT Pro robot."""
     
-    def __init__(self, logger, camera_manager, data_path: str = "./captures"):
+    def __init__(self, logger, camera_manager, data_path: str = "./captures", experiment_logger=None):
         """Initialize calibration manager.
         
         Args:
             logger: Logger instance for logging
             camera_manager: CameraManager instance for frame capture
             data_path: Path for saving calibration data
+            experiment_logger: ExperimentLogger instance for consistent data saving
         """
         self.logger = logger
         self.camera_manager = camera_manager
+        self.experiment_logger = experiment_logger
         self.data_path = Path(data_path)
         self.data_path.mkdir(exist_ok=True)
         
@@ -126,7 +128,12 @@ class CalibrationManager:
                     # Draw and display the corners
                     img_with_corners = img.copy()
                     cv2.drawChessboardCorners(img_with_corners, checkerboard_size, corners2, ret)
-                    cv2.imwrite(str(img_filename), img_with_corners)
+                    
+                    # Use experiment logger if available, otherwise fallback to direct save
+                    if self.experiment_logger:
+                        self.experiment_logger.save_frame(img_with_corners, str(img_filename), "calibration")
+                    else:
+                        cv2.imwrite(str(img_filename), img_with_corners)
                     
                     # Wait before next capture
                     if captured_images < num_images:
@@ -196,8 +203,13 @@ class CalibrationManager:
             
             # Save calibration data
             calibration_file = self.data_path / "camera_calibration.json"
-            with open(calibration_file, 'w') as f:
-                json.dump(calibration_data, f, indent=2)
+            
+            # Use experiment logger if available, otherwise fallback to direct save
+            if self.experiment_logger:
+                self.experiment_logger.save_json_data(calibration_data, str(calibration_file), "calibration")
+            else:
+                with open(calibration_file, 'w') as f:
+                    json.dump(calibration_data, f, indent=2)
             
             self.logger.log_info(f"Camera calibration completed successfully!")
             self.logger.log_info(f"Mean reprojection error: {mean_error:.3f} pixels")
@@ -399,8 +411,12 @@ class CalibrationManager:
             with open(calibration_file, 'r') as src:
                 calibration_data = json.load(src)
             
-            with open(backup_file, 'w') as dst:
-                json.dump(calibration_data, dst, indent=2)
+            # Use experiment logger if available, otherwise fallback to direct save
+            if self.experiment_logger:
+                self.experiment_logger.save_json_data(calibration_data, str(backup_file), "calibration_backup")
+            else:
+                with open(backup_file, 'w') as dst:
+                    json.dump(calibration_data, dst, indent=2)
             
             self.logger.log_info(f"Calibration backup saved to: {backup_file}")
             return True
@@ -432,8 +448,12 @@ class CalibrationManager:
             with open(backup_file, 'r') as src:
                 calibration_data = json.load(src)
             
-            with open(calibration_file, 'w') as dst:
-                json.dump(calibration_data, dst, indent=2)
+            # Use experiment logger if available, otherwise fallback to direct save
+            if self.experiment_logger:
+                self.experiment_logger.save_json_data(calibration_data, str(calibration_file), "calibration_restore")
+            else:
+                with open(calibration_file, 'w') as dst:
+                    json.dump(calibration_data, dst, indent=2)
             
             self.logger.log_info(f"Calibration restored from: {backup_filename}")
             return True

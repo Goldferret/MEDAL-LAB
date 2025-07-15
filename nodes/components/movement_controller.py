@@ -308,19 +308,6 @@ class MovementController:
             "available": self.is_available()
         }
     
-    def emergency_stop(self):
-        """Emergency stop - disable torque and stop all movement."""
-        try:
-            if self.arm and self.torque_state:
-                self.arm.Arm_serial_set_torque(0)
-                self.torque_state = False
-            
-            self.is_moving = False
-            self.logger.log_warning("Emergency stop activated")
-            
-        except Exception as e:
-            self.logger.log_error(f"Error during emergency stop: {e}")
-    
     def cleanup(self):
         """Cleanup movement controller resources."""
         try:

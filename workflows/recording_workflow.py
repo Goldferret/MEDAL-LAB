@@ -15,13 +15,6 @@ workcell_client = WorkcellClient(
     workcell_server_url=os.getenv("WORKCELL_MANAGER_URL", "http://localhost:8005")
 )
 
-# Current location of item (angle)
-current_location = 180
-# Next location of item (angle)
-next_location = 180
-# Approach method, Retreat/Return method, and Grab orientation (in order)
-movement_keys = ["directly_above", "directly_above", "horizontal"]
-
 # Create workflow for this demonstration
 demo_workflow = WorkflowDefinition(
     name=f"Recording Demo",
@@ -45,8 +38,8 @@ demo_workflow = WorkflowDefinition(
             node="DOFBOT_Pro_1",
             action="scan_for_target",
             args={
-                "object_type": "cube", # cube or rectangular_prism
-                "color": "blue"
+                "object_type": "rectangular_prism", # cube or rectangular_prism
+                "color": "green"
             }
         ),
         StepDefinition(

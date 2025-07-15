@@ -17,7 +17,7 @@ from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
 from functools import wraps
 
-from components import CameraManager, VisionDetector, MovementController, CalibrationManager
+from components import CameraManager, VisionDetector, MovementController, CalibrationManager, ExperimentLogger
 
 
 def handle_component_errors(component_name: str):
@@ -64,12 +64,14 @@ class RobotArmInterface:
         # Movement Controller - handles robot movement
         self.movement_controller = MovementController(logger, config)
         
-        # Calibration Manager - handles calibration operations
-        self.calibration_manager = CalibrationManager(logger, self.camera_manager, data_path)
+        # Experiment Logger - handles all data logging and persistence
+        self.experiment_logger = ExperimentLogger(logger, data_path)
         
-        # Recording state (interface-level coordination)
-        self._recording = False
-        self.current_trajectory_data = {}
+        # Calibration Manager - handles calibration operations
+        self.calibration_manager = CalibrationManager(logger, self.camera_manager, data_path, self.experiment_logger)
+        
+        # Connect vision detector to camera manager for debug image coordination
+        self.vision_detector.camera_manager = self.camera_manager
         
         self.logger.log_info("Robot arm interface initialized successfully")
     
@@ -109,13 +111,14 @@ class RobotArmInterface:
     
     @property
     def recording(self) -> bool:
-        """Check if trajectory recording is active at interface level."""
-        return getattr(self, '_recording', False)
+        """Check if trajectory recording is active (delegated to experiment logger)."""
+        return self.experiment_logger.is_recording()
     
     @recording.setter
     def recording(self, value: bool):
-        """Set recording state at interface level."""
-        self._recording = value
+        """Set recording state (delegated to experiment logger)."""
+        # This setter is kept for backward compatibility but logs a warning
+        self.logger.log_warning("Direct recording property setting is deprecated. Use start_recording()/stop_recording() methods.")
     
     # ========== Camera Interface Methods ==========
     
@@ -138,72 +141,7 @@ class RobotArmInterface:
     
     # ========== High-Level Operations ==========
     
-    def _scan_at_position(self, position: int, object_type: str, color: str) -> Dict[str, Any]:
-        """Scan for target object at a specific position.
-        
-        Args:
-            position: Servo position to scan at
-            object_type: Type of object to find
-            color: Color of object to find
-            
-        Returns:
-            Dictionary with detection results
-        """
-        detection_attempts = 3
-        
-        for attempt in range(detection_attempts):
-            self.logger.log_info(f"Detection attempt {attempt + 1}/{detection_attempts} at position {position}°")
-            
-            try:
-                # Capture frame using optimized synchronized method (same as recording workflow)
-                rgb_image, depth_image, depth_colormap, point_cloud = self.camera_manager.capture_synchronized_data()
-                if rgb_image is None:
-                    self.logger.log_warning(f"Failed to capture frame (attempt {attempt + 1})")
-                    continue
-                
-                # Note: capture_synchronized_data() already returns BGR format, no conversion needed
-                bgr_image = rgb_image  # Actually BGR format despite variable name
-                
-                self.logger.log_info(f"Successfully captured frame at position {position}°, attempt {attempt + 1}")
-                
-                # Save debug frame and color mask using camera manager
-                debug_prefix = f"scan_debug_pos{position}_attempt{attempt + 1}"
-                self.camera_manager.save_debug_frame(bgr_image, debug_prefix, self.data_path)
-                
-                mask_prefix = f"color_mask_{color}_pos{position}_attempt{attempt + 1}"
-                self.camera_manager.save_color_mask_debug(bgr_image, color, mask_prefix, 
-                                                        self.vision_detector, self.data_path)
-                
-                # Detect target object
-                detection_result = self.vision_detector.detect_target_object(bgr_image, object_type, color)
-                
-                if detection_result is not None:
-                    centroid, confidence = detection_result
-                    self.logger.log_info(f"🎯 TARGET DETECTED at position {position}°: {color} {object_type}")
-                    self.logger.log_info(f"   Centroid: ({centroid[0]}, {centroid[1]}), Confidence: {confidence:.2f}")
-                    
-                    if confidence > self.config.confidence_threshold:
-                        self.logger.log_info(f"✅ Target accepted (confidence {confidence:.2f} > {self.config.confidence_threshold})")
-                        return {
-                            "found": True,
-                            "centroid": centroid,
-                            "confidence": confidence,
-                            "attempt": attempt + 1
-                        }
-                    else:
-                        self.logger.log_info(f"❌ Target rejected (confidence {confidence:.2f} < {self.config.confidence_threshold})")
-                else:
-                    self.logger.log_info(f"❌ No {color} {object_type} detected at position {position}°, attempt {attempt + 1}")
-                
-                time.sleep(0.2)
-                
-            except Exception as e:
-                self.logger.log_error(f"Detection attempt {attempt + 1} failed at position {position}°: {e}")
-                continue
-        
-        return {"found": False}
-    
-    def scan_for_target_action_level(self, object_type: str, color: str) -> Dict[str, Any]:
+    def scan_for_target(self, object_type: str, color: str) -> Dict[str, Any]:
         """Scan using action-level pipeline switching for guaranteed fresh frames."""
         
         scan_positions = self.config.scan_positions
@@ -228,23 +166,64 @@ class RobotArmInterface:
             for position in scan_positions:
                 self.logger.log_info(f"Action-level scanning at servo1={position}°...")
                 
-                # Scan at this position with sustained scanning pipeline
-                detection_result = self._scan_at_position_sustained(position, object_type, color)
-                positions_checked.append(position)
+                # STEP 0: Move robot to position
+                self.movement_controller.move_single_joint(1, position, record_action=False)
+                time.sleep(self.config.scan_delay)  # Wait for movement to complete
                 
-                if detection_result["found"]:
-                    # Target found - return success
-                    scan_time = time.time() - start_time
-                    return self._build_scan_result(
-                        success=True,
-                        target_found=True,
-                        position=position,
-                        detection_data=detection_result,
-                        positions_checked=positions_checked,
-                        scan_time=scan_time,
-                        object_type=object_type,
-                        color=color
+                try:
+                    # STEP 1: Get Frame from Camera Manager (memory optimized)
+                    rgb_image, depth_image, _, _ = self.camera_manager.grab_fresh_scanning_frame(
+                        timeout_ms=2000, save_for_recording=True
                     )
+                    
+                    if rgb_image is None:
+                        self.logger.log_warning(f"No frame received at position {position} - continuing to next position")
+                        continue
+                    
+                    # STEP 2: Pass Frame to Vision Detector (enhanced with debug images)
+                    detection_result, debug_images = self.vision_detector.detect_target_object(
+                        rgb_image, object_type, color
+                    )
+                    
+                    # STEP 3: Collect Return Values and Debug Data
+                    scan_data = {
+                        "position": position,
+                        "detection_result": detection_result,
+                        "debug_images": debug_images,
+                        "frame_metadata": {
+                            "timestamp": time.time(),
+                            "object_type": object_type,
+                            "color": color,
+                            "rgb_shape": rgb_image.shape
+                        }
+                    }
+                    
+                    # STEP 4: Pass to Experiment Logger
+                    if not self.experiment_logger.log_scanning_event(
+                        original_frame=rgb_image,
+                        scan_data=scan_data
+                    ):
+                        self.logger.log_warning(f"Failed to log scanning event at position {position}")
+                    
+                    # STEP 5: Function Conclusion - Evaluate Results and Handle Early Return
+                    if detection_result and detection_result[1] > self.config.confidence_threshold:
+                        scan_time = time.time() - start_time
+                        return self._build_scan_result(
+                            success=True,
+                            target_found=True,
+                            position=position,
+                            detection_data={"found": True, "centroid": detection_result[0], "confidence": detection_result[1]},
+                            positions_checked=positions_checked + [position],
+                            scan_time=scan_time,
+                            object_type=object_type,
+                            color=color
+                        )
+                
+                except Exception as e:
+                    self.logger.log_error(f"Error scanning at position {position}: {e}")
+                    # Continue to next position on error
+                
+                positions_checked.append(position)
             
             # Target not found after scanning all positions
             scan_time = time.time() - start_time
@@ -273,47 +252,6 @@ class RobotArmInterface:
             # Always switch back to recording mode
             if not self.camera_manager.switch_to_recording_mode():
                 self.logger.log_error("Failed to switch back to recording mode")
-    
-    def _scan_at_position_sustained(self, position: int, object_type: str, color: str) -> Dict[str, Any]:
-        """Scan at position with sustained scanning pipeline (no switching)."""
-        
-        # Move to position
-        self.movement_controller.move_single_joint(1, position, record_action=False)
-        
-        # Wait for movement to complete
-        time.sleep(self.config.scan_delay)
-        
-        try:
-            # Get fresh frame from sustained scanning pipeline
-            rgb_image, depth_image, depth_colormap, _ = self.camera_manager.grab_fresh_scanning_frame(
-                timeout_ms=2000, save_for_recording=True
-            )
-            
-            if rgb_image is not None:
-                # Generate color mask for debugging
-                color_mask = self.vision_detector.create_color_mask(rgb_image, color)
-                
-                # Process the fresh frame
-                detection_result = self.vision_detector.detect_target_object(rgb_image, object_type, color)
-                
-                # Save detection results for analysis
-                self.camera_manager.save_scanning_detection_result(
-                    rgb_image, color_mask, detection_result, position, object_type, color
-                )
-                
-                if detection_result and detection_result[1] > self.config.confidence_threshold:
-                    return {
-                        "found": True,
-                        "centroid": detection_result[0],
-                        "confidence": detection_result[1],
-                        "method": "action_level_sustained"
-                    }
-            
-            return {"found": False, "error": "No fresh frame available or detection failed"}
-            
-        except Exception as e:
-            self.logger.log_error(f"Error scanning at position {position}: {e}")
-            return {"found": False, "error": f"Scanning error: {str(e)}"}
     
     def _build_scan_result(self, success: bool, target_found: bool, **kwargs) -> Dict[str, Any]:
         """Build standardized scan result dictionary."""
@@ -573,32 +511,23 @@ class RobotArmInterface:
         """
         if self.recording:
             self.logger.log_warning("Already recording a trajectory. Stop the current recording first.")
-            return self.current_trajectory_data.get("trajectory_id", "")
+            current_data = self.experiment_logger.get_current_trajectory_data()
+            return current_data.get("trajectory_id", "") if current_data else ""
         
         # Generate unique experiment ID
         experiment_id = f"experiment_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        experiment_dir = Path(self.data_path) / experiment_id
         
-        # Create directory structure
-        experiment_dir.mkdir(exist_ok=True)
-        (experiment_dir / "rgb_images").mkdir(exist_ok=True)
-        (experiment_dir / "depth_images").mkdir(exist_ok=True)
-        (experiment_dir / "point_clouds").mkdir(exist_ok=True)
+        # Start recording through experiment logger
+        actual_experiment_id = self.experiment_logger.start_recording(experiment_id)
         
-        # Initialize recording state
-        self.current_trajectory_data = {
-            "trajectory_id": experiment_id,
-            "annotation": annotation,
-            "task_description": task_description,
-            "start_time": time.time(),
-            "joint_states": [],
-            "actions": [],
-            "images": []
-        }
+        # Add annotation and task description to trajectory data
+        current_data = self.experiment_logger.get_current_trajectory_data()
+        if current_data:
+            current_data["metadata"]["annotation"] = annotation
+            current_data["metadata"]["task_description"] = task_description
         
-        self.recording = True
-        self.logger.log_info(f"Started recording experiment {experiment_id}")
-        return experiment_id
+        self.logger.log_info(f"Started recording experiment {actual_experiment_id}")
+        return actual_experiment_id
     
     def stop_recording(self) -> Optional[Dict[str, Any]]:
         """Stop coordinated recording and save trajectory data.
@@ -610,24 +539,14 @@ class RobotArmInterface:
             self.logger.log_warning("No active recording to stop.")
             return None
         
-        experiment_id = self.current_trajectory_data["trajectory_id"]
-        experiment_dir = Path(self.data_path) / experiment_id
+        # Stop recording through experiment logger
+        trajectory_data = self.experiment_logger.stop_recording()
         
-        # Add end time and duration
-        self.current_trajectory_data["end_time"] = time.time()
-        self.current_trajectory_data["duration"] = (
-            self.current_trajectory_data["end_time"] - self.current_trajectory_data["start_time"]
-        )
+        if trajectory_data:
+            experiment_id = trajectory_data["trajectory_id"]
+            self.logger.log_info(f"Stopped and saved experiment {experiment_id}")
         
-        # Save trajectory data
-        with open(experiment_dir / "trajectory_data.json", "w") as f:
-            json.dump(self.current_trajectory_data, f, indent=2)
-        
-        self.recording = False
-        self.logger.log_info(f"Stopped and saved experiment {experiment_id}")
-        
-        # Return copy of trajectory data for the caller
-        return self.current_trajectory_data.copy()
+        return trajectory_data
     
     def record_data_point(self, action_name: str = "", action_params: Dict = None):
         """Record coordinated data point with movement and camera data.
@@ -639,68 +558,15 @@ class RobotArmInterface:
         if not self.recording:
             return
         
-        try:
-            timestamp = time.time()
-            experiment_dir = Path(self.data_path) / self.current_trajectory_data["trajectory_id"]
-            frame_id = f"frame_{len(self.current_trajectory_data['joint_states']):06d}"
-            
-            # Get movement data from movement controller
-            joint_state = {
-                "timestamp": timestamp,
-                "joint_angles": self.movement_controller.joint_angles.copy(),
-                "gripper_closed": self.movement_controller.gripper_closed,
-                "is_moving": self.movement_controller.is_moving,
-                "action_name": action_name,
-                "action_params": action_params or {}
-            }
-            
-            # Capture images from camera manager (skip during scanning)
-            image_data = {"frame_id": frame_id, "timestamp": timestamp}
-            
-            # Check if scanning is active - if so, skip image capture but note it
-            if self.camera_manager.is_scanning_active():
-                image_data["scanning_active"] = True
-                image_data["note"] = "Image capture skipped - scanning in progress"
-                self.logger.log_debug(f"Skipping image capture for {frame_id} - scanning active")
-            else:
-                try:
-                    # Get synchronized camera data
-                    rgb_image, depth_image, depth_colormap, point_cloud = self.camera_manager.capture_synchronized_data()
-                    
-                    # Save RGB image
-                    if rgb_image is not None:
-                        rgb_path = experiment_dir / "rgb_images" / f"{frame_id}.jpg"
-                        cv2.imwrite(str(rgb_path), rgb_image)
-                        image_data["rgb_path"] = f"rgb_images/{frame_id}.jpg"
-                    
-                        # Save depth data
-                    if depth_image is not None:
-                        depth_path = experiment_dir / "depth_images" / f"{frame_id}_depth.png"
-                        cv2.imwrite(str(depth_path), depth_image)
-                        image_data["depth_path"] = f"depth_images/{frame_id}_depth.png"
-                        
-                        # Save colorized depth map
-                        if depth_colormap is not None:
-                            colormap_path = experiment_dir / "depth_images" / f"{frame_id}_depth_colormap.jpg"
-                            cv2.imwrite(str(colormap_path), depth_colormap)
-                            image_data["depth_colormap_path"] = f"depth_images/{frame_id}_depth_colormap.jpg"
-                    
-                    # Save point cloud
-                    if point_cloud is not None:
-                        pc_path = experiment_dir / "point_clouds" / f"{frame_id}_pointcloud.npy"
-                        np.save(str(pc_path), point_cloud)
-                        image_data["point_cloud_path"] = f"point_clouds/{frame_id}_pointcloud.npy"
-                        image_data["point_cloud_size"] = len(point_cloud)
-                        
-                except Exception as e:
-                    self.logger.log_error(f"Error capturing images during recording: {e}")
-            
-            # Store coordinated data (joint data always recorded, images only when not scanning)
-            self.current_trajectory_data["joint_states"].append(joint_state)
-            self.current_trajectory_data["images"].append(image_data)
-            
-        except Exception as e:
-            self.logger.log_error(f"Error recording data point: {e}")
+        # Delegate to experiment logger with movement controller data
+        self.experiment_logger.record_data_point(
+            action_name=action_name,
+            action_params=action_params,
+            joint_angles=self.movement_controller.joint_angles,
+            gripper_closed=self.movement_controller.gripper_closed,
+            is_moving=self.movement_controller.is_moving,
+            camera_manager=self.camera_manager
+        )
     
     # ========== Movement Methods with Recording Integration ==========
     
