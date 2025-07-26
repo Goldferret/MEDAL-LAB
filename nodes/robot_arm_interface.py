@@ -172,7 +172,7 @@ class RobotArmInterface:
                 
                 try:
                     # STEP 1: Get Frame from Camera Manager (memory optimized)
-                    rgb_image, depth_image, _, _ = self.camera_manager.grab_fresh_scanning_frame(
+                    rgb_image, depth_image, depth_colormap, _ = self.camera_manager.grab_fresh_scanning_frame(
                         timeout_ms=2000, save_for_recording=True
                     )
                     
@@ -198,9 +198,11 @@ class RobotArmInterface:
                         }
                     }
                     
-                    # STEP 4: Pass to Experiment Logger
+                    # STEP 4: Pass to Experiment Logger (including depth image)
                     if not self.experiment_logger.log_scanning_event(
                         original_frame=rgb_image,
+                        depth_frame=depth_image,
+                        depth_colormap=depth_colormap,
                         scan_data=scan_data
                     ):
                         self.logger.log_warning(f"Failed to log scanning event at position {position}")

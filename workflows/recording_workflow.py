@@ -38,8 +38,8 @@ demo_workflow = WorkflowDefinition(
             node="DOFBOT_Pro_1",
             action="scan_for_target",
             args={
-                "object_type": "rectangular_prism", # cube or rectangular_prism
-                "color": "green"
+                "object_type": "cube", # cube or rectangular_prism
+                "color": "blue"
             }
         ),
         StepDefinition(

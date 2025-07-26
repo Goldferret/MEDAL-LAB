@@ -38,16 +38,16 @@ class RobotArmConfig(RestNodeConfig):
     
     # Vision detection thresholds (centralized from vision_detector)
     vision_thresholds: Dict[str, Any] = {
-        "min_area": 500,                    # Increased from 100 - minimum contour area
-        "min_radius": 15,                   # Increased from 10 - minimum circle radius (Yahboom)
-        "confidence_weights": (0.6, 0.4),  # Shape vs color confidence weighting
-        "canny_thresholds": (50, 150),     # Edge detection thresholds
-        "polygon_epsilon": 0.02,           # Polygon approximation factor
-        "rectangle_extent": 0.6,           # Lowered from 0.8 to 0.6 - minimum rectangle fill ratio (more permissive for real objects)
-        "aspect_ratio_square": (0.9, 1.1), # Tightened from (0.8, 1.2) - square aspect ratio range (more square)
-        "morphology_iterations": 2,        # Erosion/dilation iterations
-        "gaussian_kernel": (5, 5),         # Gaussian blur kernel size
-        "edge_margin": 50,                 # NEW: Minimum distance from image edges
+        "min_area": 400,                    # Reduced to below largest contour (616 pixels)
+        "min_radius": 15,                   # Kept the same - minimum circle radius
+        "confidence_weights": (0.6, 0.4),   # Shape vs color confidence weighting
+        "canny_thresholds": (15, 45),       # Less sensitive edge detection
+        "polygon_epsilon": 0.02,            # More flexible polygon approximation
+        "rectangle_extent": 0.4,            # Accept less perfect rectangles
+        "aspect_ratio_square": (0.8, 1.2),  # Kept the same - square aspect ratio range
+        "morphology_iterations": 2,         # Kept the same - erosion/dilation iterations
+        "gaussian_kernel": (3, 3),        # Stronger noise reduction
+        "edge_margin": 50,                  # Kept the same - minimum distance from image edges
     }
     
     # HSV color ranges (calibrated)

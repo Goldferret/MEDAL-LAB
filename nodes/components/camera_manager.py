@@ -151,6 +151,24 @@ class CameraManager:
         self._setup_color_stream_for_pipeline(self.scanning_pipeline, self.scanning_config, "scanning")
         self._setup_depth_stream_for_pipeline(self.scanning_pipeline, self.scanning_config, "scanning")
         
+        # Enable frame synchronization if supported (copied from recording pipeline)
+        try:
+            self.scanning_pipeline.enable_frame_sync()
+            self.logger.log_info("Scanning pipeline: Frame synchronization enabled")
+        except Exception as e:
+            self.logger.log_info("Scanning pipeline: Frame sync not supported - using alignment only")
+        
+        # Set alignment mode for better RGB-Depth correspondence (copied from recording pipeline)
+        try:
+            self.scanning_config.set_align_mode(OBAlignMode.HW_MODE)
+            self.logger.log_info("Scanning pipeline: Hardware alignment enabled")
+        except Exception as e:
+            try:
+                self.scanning_config.set_align_mode(OBAlignMode.SW_MODE)
+                self.logger.log_info("Scanning pipeline: Software alignment enabled")
+            except Exception as e2:
+                self.logger.log_info("Scanning pipeline: Alignment not available - using raw frames")
+        
         self.logger.log_info("Scanning pipeline configured for RGB+Depth operation")
     
     def _setup_color_stream_for_pipeline(self, pipeline, config, pipeline_name):
@@ -160,7 +178,7 @@ class CameraManager:
             self.logger.log_error(f"No color profiles available for {pipeline_name} pipeline")
             return
         
-        self.logger.log_debug(f"Found {color_profiles.get_count()} color profiles for {pipeline_name}")
+        self.logger.log_info(f"Found {color_profiles.get_count()} color profiles for {pipeline_name}")
         
         # Use recording-optimized profiles for recording pipeline
         if pipeline_name == "recording":
@@ -200,7 +218,7 @@ class CameraManager:
             self.logger.log_error(f"No depth profiles available for {pipeline_name} pipeline")
             return
         
-        self.logger.log_debug(f"Found {depth_profiles.get_count()} depth profiles for {pipeline_name}")
+        self.logger.log_info(f"Found {depth_profiles.get_count()} depth profiles for {pipeline_name}")
         
         # Depth profile configurations
         profile_configs = [
@@ -274,7 +292,7 @@ class CameraManager:
                 break
         
         if cleared_count > 0:
-            self.logger.log_debug(f"Cleared {cleared_count} old frames from queue")
+            self.logger.log_info(f"Cleared {cleared_count} old frames from queue")
     
     def _wait_for_queue_refill(self, target_frames=10, timeout_seconds=5.0):
         """Wait for the frameset queue to refill after pipeline restart."""
@@ -288,13 +306,13 @@ class CameraManager:
         
         warmup_time = time.time() - warmup_start
         queue_size = self._frameset_queue.qsize()
-        self.logger.log_debug(f"Queue refilled after {warmup_time:.1f}s with {queue_size} frames")
+        self.logger.log_info(f"Queue refilled after {warmup_time:.1f}s with {queue_size} frames")
         return queue_size >= target_frames
     
     def switch_to_scanning_mode(self, action_context=None):
         """Switch from recording to scanning pipeline mode."""
         if self._pipeline_mode == "scanning":
-            self.logger.log_debug("Already in scanning mode")
+            self.logger.log_info("Already in scanning mode")
             return True
         
         try:
@@ -313,7 +331,7 @@ class CameraManager:
                 self._frame_callback_active = False
                 self.recording_pipeline.stop()
                 time.sleep(0.2)  # Allow pipeline to fully stop
-                self.logger.log_debug("Recording pipeline stopped for scanning")
+                self.logger.log_info("Recording pipeline stopped for scanning")
             
             # Start scanning pipeline (polling mode, no callback)
             self.scanning_pipeline.start(self.scanning_config)
@@ -334,7 +352,7 @@ class CameraManager:
     def switch_to_recording_mode(self):
         """Switch from scanning to recording pipeline mode."""
         if self._pipeline_mode == "recording":
-            self.logger.log_debug("Already in recording mode")
+            self.logger.log_info("Already in recording mode")
             return True
         
         try:
@@ -344,7 +362,7 @@ class CameraManager:
             if self._pipeline_mode == "scanning":
                 self.scanning_pipeline.stop()
                 time.sleep(0.2)  # Allow pipeline to fully stop
-                self.logger.log_debug("Scanning pipeline stopped")
+                self.logger.log_info("Scanning pipeline stopped")
             
             # Save scanning frames if we were recording before
             if self._was_recording_before_scan and self._scanning_frames_buffer:
@@ -362,7 +380,7 @@ class CameraManager:
                 # Wait for queue to refill with fresh frames
                 self.logger.log_info("Waiting for recording pipeline to refill with fresh frames...")
                 if self._wait_for_queue_refill(target_frames=10, timeout_seconds=5.0):
-                    self.logger.log_debug("Recording pipeline restarted with fresh frame queue")
+                    self.logger.log_info("Recording pipeline restarted with fresh frame queue")
                 else:
                     self.logger.log_warning("Recording pipeline queue refill timeout - may have stale frames initially")
             
@@ -429,7 +447,7 @@ class CameraManager:
             # Process the frameset
             rgb_image, depth_image, depth_colormap, point_cloud = self._process_scanning_frameset(frameset)
             
-            # Save frame data for recording if requested and we were recording before
+            # Add to scanning frames buffer if recording
             if save_for_recording and self._was_recording_before_scan and rgb_image is not None:
                 frame_data = {
                     "timestamp": time.time(),
@@ -438,11 +456,8 @@ class CameraManager:
                     "depth_shape": depth_image.shape if depth_image is not None else None,
                     "frame_index": len(self._scanning_frames_buffer)
                 }
-                
-                # Save actual frame data to disk and store metadata
-                if self._save_scanning_frame_to_disk(rgb_image, depth_image, depth_colormap, frame_data):
-                    self._scanning_frames_buffer.append(frame_data)
-                    self.logger.log_debug(f"Scanning frame {frame_data['frame_index']} saved for recording")
+                self._scanning_frames_buffer.append(frame_data)
+                self.logger.log_info(f"Added frame {frame_data['frame_index']} to scanning buffer")
             
             return rgb_image, depth_image, depth_colormap, point_cloud
             
@@ -451,99 +466,121 @@ class CameraManager:
             return None, None, None, None
     
     def _process_scanning_frameset(self, frameset):
-        """Process scanning frameset (RGB-only optimized)."""
+        """Process scanning frameset with proper depth scaling."""
         rgb_image = None
         depth_image = None
         depth_colormap = None
         point_cloud = None
-        
+
         try:
             # Process RGB frame (primary for scanning)
             color_frame = frameset.get_color_frame()
             if color_frame:
                 rgb_image = self.frame_to_bgr_image(color_frame)
-                if rgb_image is not None:
-                    self.logger.log_debug(f"Processed scanning RGB frame: {rgb_image.shape}")
-            
+
             # Process depth frame if available (optional for scanning)
             depth_frame = frameset.get_depth_frame()
             if depth_frame:
                 try:
                     width = depth_frame.get_width()
                     height = depth_frame.get_height()
-                    depth_data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
-                    depth_image = depth_data.reshape((height, width))
+                    scale = depth_frame.get_depth_scale()
                     
-                    # Create colorized depth map
+                    # Get raw uint16 depth data
+                    depth_data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
+                    depth_image_raw = depth_data.reshape((height, width))
+                    
+                    # *** APPLY OVERFLOW CORRECTION ON RAW UINT16 DATA ***
+                    depth_image_corrected = self._correct_uint16_overflow_artifacts(depth_image_raw)
+                    
+                    # Convert corrected depth to actual values in millimeters
+                    depth_image = depth_image_corrected.astype(np.float32) * scale
+                    
+                    # Apply existing depth range filtering
+                    MIN_DEPTH, MAX_DEPTH = 20, 3000
+                    depth_image = np.where((depth_image > MIN_DEPTH) & (depth_image < MAX_DEPTH), depth_image, 0)
+                        
+                    # Create colorized depth map using actual depth values (normalize from float32)
                     depth_normalized = cv2.normalize(depth_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
                     depth_colormap = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
+                        
+                    self.logger.log_info(f"Processed depth frame with scale factor: {scale}")
+                    
                 except Exception as e:
-                    self.logger.log_debug(f"Error processing scanning depth frame: {e}")
-        
+                    self.logger.log_info(f"Error processing scanning depth frame: {e}")
+
         except Exception as e:
             self.logger.log_error(f"Error processing scanning frameset: {e}")
-        
+
         return rgb_image, depth_image, depth_colormap, point_cloud
     
-    def _save_scanning_frame_to_disk(self, rgb_image, depth_image, depth_colormap, frame_data):
-        """Save scanning frame data to main recording directory for integration."""
-        try:
-            session_id = frame_data["session_id"]
-            frame_index = frame_data["frame_index"]
-            timestamp = frame_data["timestamp"]
+    def _correct_uint16_overflow_artifacts(self, depth_raw):
+        """
+        Correct uint16 overflow artifacts with enhanced debugging
+        """
+        corrected = depth_raw.copy()
+        rows_corrected = 0
+        
+        # Add comprehensive debugging
+        total_pixels = depth_raw.size
+        valid_pixels = np.sum(depth_raw > 0)
+        
+        self.logger.log_info(f"Depth data analysis: {valid_pixels}/{total_pixels} valid pixels")
+        self.logger.log_info(f"Depth range: min={np.min(depth_raw[depth_raw > 0])}, max={np.max(depth_raw)}")
+        
+        # Analyze the full distribution
+        if valid_pixels > 0:
+            valid_data = depth_raw[depth_raw > 0]
+            percentiles = np.percentile(valid_data, [1, 5, 10, 90, 95, 99])
+            self.logger.log_info(f"Depth percentiles - 1%:{percentiles[0]}, 5%:{percentiles[1]}, "
+                               f"10%:{percentiles[2]}, 90%:{percentiles[3]}, 95%:{percentiles[4]}, 99%:{percentiles[5]}")
+        
+        for row in range(depth_raw.shape[0]):
+            row_data = depth_raw[row, :]
+            valid_data = row_data[row_data > 0]
             
-            # Check if we have an active recording experiment to integrate with
-            experiment_dir = self._get_current_experiment_directory()
+            if len(valid_data) < 10:
+                continue
             
-            if experiment_dir and experiment_dir.exists():
-                # Save to main experiment directory (integrated with recording)
-                self.logger.log_debug(f"Saving scanning frame to experiment directory: {experiment_dir}")
+            # Dynamic threshold detection instead of fixed values
+            row_min, row_max = np.min(valid_data), np.max(valid_data)
+            row_range = row_max - row_min
+            
+            # Look for bimodal pattern: significant gap in distribution
+            if row_range > 10000:  # Significant range suggests potential overflow
+                # Count values in lower 20% and upper 20% of range
+                lower_threshold = row_min + (row_range * 0.2)
+                upper_threshold = row_max - (row_range * 0.2)
                 
-                # Save RGB image to experiment's rgb_images directory
-                if rgb_image is not None:
-                    rgb_dir = experiment_dir / "rgb_images"
-                    rgb_dir.mkdir(exist_ok=True)
-                    rgb_filename = f"scan_{session_id}_frame_{frame_index:04d}_{int(timestamp*1000)}.jpg"
-                    rgb_path = rgb_dir / rgb_filename
-                    cv2.imwrite(str(rgb_path), rgb_image)
-                    frame_data["rgb_file"] = str(rgb_path)
-                    frame_data["integrated_with_recording"] = True
+                very_low_count = np.sum(valid_data < lower_threshold)
+                high_count = np.sum(valid_data > upper_threshold)
+                middle_count = np.sum((valid_data >= lower_threshold) & (valid_data <= upper_threshold))
                 
-                # Save depth image to experiment's depth_images directory
-                if depth_image is not None:
-                    depth_dir = experiment_dir / "depth_images"
-                    depth_dir.mkdir(exist_ok=True)
-                    depth_filename = f"scan_{session_id}_frame_{frame_index:04d}_{int(timestamp*1000)}.png"
-                    depth_path = depth_dir / depth_filename
-                    cv2.imwrite(str(depth_path), depth_image)
-                    frame_data["depth_file"] = str(depth_path)
-                
-                # Save depth colormap for visualization
-                if depth_colormap is not None:
-                    colormap_filename = f"scan_{session_id}_frame_{frame_index:04d}_{int(timestamp*1000)}_colormap.jpg"
-                    colormap_path = rgb_dir / colormap_filename
-                    cv2.imwrite(str(colormap_path), depth_colormap)
-                    frame_data["depth_colormap_file"] = str(colormap_path)
+                # Check for bimodal distribution (low values + high values, few middle values)
+                if (very_low_count > len(valid_data) * 0.1 and 
+                    high_count > len(valid_data) * 0.1 and
+                    middle_count < len(valid_data) * 0.3):
                     
-            else:
-                # Fallback to separate scanning directory if no active recording
-                self.logger.log_debug("No active recording experiment - saving to separate scanning directory")
-                session_dir = Path(self.data_path) / "scanning_sessions" / session_id
-                session_dir.mkdir(parents=True, exist_ok=True)
-                
-                # Save RGB image
-                if rgb_image is not None:
-                    rgb_filename = f"frame_{frame_index:04d}_rgb.jpg"
-                    rgb_path = session_dir / rgb_filename
-                    cv2.imwrite(str(rgb_path), rgb_image)
-                    frame_data["rgb_file"] = str(rgb_path)
-                    frame_data["integrated_with_recording"] = False
-            
-            return True
-            
-        except Exception as e:
-            self.logger.log_error(f"Error saving scanning frame to disk: {e}")
-            return False
+                    self.logger.log_info(f"Row {row}: Potential overflow detected - "
+                                       f"range={row_range}, low={very_low_count}, high={high_count}, middle={middle_count}")
+                    
+                    # Interpolate problematic row
+                    if 0 < row < depth_raw.shape[0] - 1:
+                        above_row = depth_raw[row-1, :].astype(np.uint32)
+                        below_row = depth_raw[row+1, :].astype(np.uint32)
+                        interpolated = ((above_row + below_row) / 2).astype(np.uint16)
+                        corrected[row, :] = interpolated
+                        rows_corrected += 1
+                    else:
+                        corrected[row, :] = 0
+                        rows_corrected += 1
+        
+        if rows_corrected > 0:
+            self.logger.log_info(f"Corrected uint16 overflow in {rows_corrected} rows")
+        else:
+            self.logger.log_info("No overflow patterns detected - thresholds may need adjustment")
+        
+        return corrected
     
     def _get_current_experiment_directory(self):
         """Get the current experiment directory if recording is active."""
@@ -570,7 +607,7 @@ class CameraManager:
             return None
             
         except Exception as e:
-            self.logger.log_debug(f"Could not determine current experiment directory: {e}")
+            self.logger.log_info(f"Could not determine current experiment directory: {e}")
             return None
     
     def save_scanning_detection_result(self, rgb_image, color_mask, detection_result, position, object_type, color):
@@ -584,7 +621,7 @@ class CameraManager:
             
             if experiment_dir and experiment_dir.exists():
                 # Save to main experiment directory (integrated with recording)
-                self.logger.log_debug(f"Saving detection results to experiment directory: {experiment_dir}")
+                self.logger.log_info(f"Saving detection results to experiment directory: {experiment_dir}")
                 
                 # Create detection subdirectory in experiment
                 detection_dir = experiment_dir / "scanning_detections"
@@ -641,11 +678,11 @@ class CameraManager:
                 with open(metadata_file, 'w') as f:
                     json.dump(all_detections, f, indent=2)
                 
-                self.logger.log_debug(f"Detection result integrated with experiment at pos{position}")
+                self.logger.log_info(f"Detection result integrated with experiment at pos{position}")
                 
             else:
                 # Fallback to separate scanning directory if no active recording
-                self.logger.log_debug("No active recording experiment - saving detection to separate directory")
+                self.logger.log_info("No active recording experiment - saving detection to separate directory")
                 session_dir = Path(self.data_path) / "scanning_sessions" / self._scanning_session_id
                 session_dir.mkdir(parents=True, exist_ok=True)
                 
@@ -703,7 +740,7 @@ class CameraManager:
                 else:
                     f.write(f"No valid detection found\n")
             
-            self.logger.log_debug(f"Saved hybrid detection summary: {filename}")
+            self.logger.log_info(f"Saved hybrid detection summary: {filename}")
         except Exception as e:
             self.logger.log_error(f"Failed to save hybrid detection summary {filename}: {e}")
     
@@ -806,10 +843,23 @@ class CameraManager:
                 # Convert depth frame to numpy array
                 width = depth_frame.get_width()
                 height = depth_frame.get_height()
-                depth_data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
-                depth_image = depth_data.reshape((height, width))
                 
-                # Create colorized depth map
+                # CRITICAL FIX: Get the depth scale factor
+                scale = depth_frame.get_depth_scale()
+                
+                # Get raw uint16 depth data
+                depth_data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
+                depth_image_raw = depth_data.reshape((height, width))
+                
+                # Convert to actual depth values in millimeters and keep as float32
+                depth_image = depth_image_raw.astype(np.float32) * scale
+                
+                # Apply depth range filtering (same as scanning pipeline)
+                MIN_DEPTH = 20   # 20mm minimum
+                MAX_DEPTH = 3000 # 3000mm maximum (3m for DaBai DCW2)
+                depth_image = np.where((depth_image > MIN_DEPTH) & (depth_image < MAX_DEPTH), depth_image, 0)
+                
+                # Create colorized depth map using actual depth values (normalize from float32)
                 depth_normalized = cv2.normalize(depth_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
                 depth_colormap = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
                 
@@ -918,14 +968,14 @@ class CameraManager:
             if self.recording_pipeline:
                 try:
                     self.recording_pipeline.stop()
-                    self.logger.log_debug("Recording pipeline stopped")
+                    self.logger.log_info("Recording pipeline stopped")
                 except:
                     pass
             
             if self.scanning_pipeline:
                 try:
                     self.scanning_pipeline.stop()
-                    self.logger.log_debug("Scanning pipeline stopped")
+                    self.logger.log_info("Scanning pipeline stopped")
                 except:
                     pass
             
@@ -965,7 +1015,7 @@ class CameraManager:
             
             if experiment_dir and experiment_dir.exists():
                 # Save to main experiment directory (integrated with recording)
-                self.logger.log_debug(f"Saving scanning session to experiment directory: {experiment_dir}")
+                self.logger.log_info(f"Saving scanning session to experiment directory: {experiment_dir}")
                 
                 # Create session summary integrated with experiment
                 session_summary = {
@@ -990,7 +1040,7 @@ class CameraManager:
                 
             else:
                 # Fallback to separate scanning directory if no active recording
-                self.logger.log_debug("No active recording experiment - saving session to separate directory")
+                self.logger.log_info("No active recording experiment - saving session to separate directory")
                 session_dir = Path(self.data_path) / "scanning_sessions" / self._scanning_session_id
                 
                 # Create session summary
@@ -1047,10 +1097,10 @@ class CameraManager:
             with open(metadata_file, 'w') as f:
                 json.dump(metadata, f, indent=2)
                 
-            self.logger.log_debug(f"Updated experiment metadata with scanning session {session_summary['session_id']}")
+            self.logger.log_info(f"Updated experiment metadata with scanning session {session_summary['session_id']}")
             
         except Exception as e:
-            self.logger.log_debug(f"Could not update experiment metadata: {e}")
+            self.logger.log_info(f"Could not update experiment metadata: {e}")
     
     def is_available(self) -> bool:
         """Check if camera is available and working.

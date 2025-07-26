@@ -58,11 +58,13 @@ class ExperimentLogger:
         self.current_trajectory_data = None
     
     @handle_logging_errors("scanning event logging")
-    def log_scanning_event(self, original_frame: np.ndarray, scan_data: Dict[str, Any]) -> bool:
+    def log_scanning_event(self, original_frame: np.ndarray, depth_frame: np.ndarray, depth_colormap: np.ndarray, scan_data: Dict[str, Any]) -> bool:
         """Log complete scanning event with all associated data.
         
         Args:
             original_frame: Original RGB frame from camera
+            depth_frame: Original Depth frame from camera
+            depth_colormap: Original Colormap from Depth frame
             scan_data: Dictionary containing all scan information
             
         Returns:
@@ -90,7 +92,7 @@ class ExperimentLogger:
             
             # Save debug images
             debug_paths = self._save_scanning_debug_images(
-                scanning_dir, event_id, original_frame, debug_images
+                scanning_dir, event_id, original_frame, depth_frame, depth_colormap, debug_images
             )
             
             # Create event record
@@ -120,13 +122,15 @@ class ExperimentLogger:
             return False
     
     def _save_scanning_debug_images(self, scanning_dir: Path, event_id: str, 
-                                   original_frame: np.ndarray, debug_images: Dict[str, np.ndarray]) -> Dict[str, str]:
+                                   original_frame: np.ndarray, depth_frame: np.ndarray, depth_colormap: np.ndarray, debug_images: Dict[str, np.ndarray]) -> Dict[str, str]:
         """Save all debug images for a scanning event.
         
         Args:
             scanning_dir: Directory to save images in
             event_id: Unique identifier for this event
             original_frame: Original RGB frame
+            depth_frame: Original Depth frame
+            depth_colormap: Original Depth Colormap
             debug_images: Dictionary of debug images
             
         Returns:
@@ -139,6 +143,16 @@ class ExperimentLogger:
             original_path = scanning_dir / f"{event_id}_01_original.jpg"
             if self.save_frame(original_frame, str(original_path), "original"):
                 debug_paths["original"] = str(original_path)
+                
+            # Save depth frame
+            depth_path = scanning_dir / f"{event_id}_02_depth.png"
+            if self.save_frame(depth_frame, str(depth_path), "depth"):
+                debug_paths["depth"] = str(depth_path)
+                
+            # Save depth colormap
+            colormap_path = scanning_dir / f"{event_id}_03_colormap.jpg"
+            if self.save_frame(depth_colormap, str(colormap_path), "colormap"):
+                debug_paths["colormap"] = str(colormap_path)
             
             # Save debug images
             image_mapping = {
@@ -198,14 +212,22 @@ class ExperimentLogger:
         Args:
             image: Image array to save
             file_path: Full path where to save the image
-            image_type: Type of image for logging purposes (e.g., "mask", "detection", "original", "recording")
+            image_type: Type of image for logging purposes (e.g., "mask", "detection", "original", "recording", "depth")
             
         Returns:
             True if saved successfully, False otherwise
         """
         try:
             Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-            cv2.imwrite(file_path, image)
+            
+            # Special handling for depth images
+            if image_type == "depth" and image is not None:
+                # Convert to millimeters and save as 16-bit PNG
+                depth_mm = (image * 1000).astype(np.uint16)
+                cv2.imwrite(file_path, depth_mm)
+            else:
+                cv2.imwrite(file_path, image)
+                
             self.logger.log_debug(f"Saved {image_type} image: {Path(file_path).name}")
             return True
         except Exception as e:
@@ -435,7 +457,8 @@ class ExperimentLogger:
                     # Save depth data (synchronous - may block 10Hz pipeline)
                     if depth_image is not None:
                         depth_path = self.current_experiment_dir / "depth_images" / f"{frame_id}_depth.png"
-                        cv2.imwrite(str(depth_path), depth_image)
+                        # Save depth image with 16-bit precision to preserve depth values
+                        cv2.imwrite(str(depth_path), (depth_image * 1000).astype(np.uint16))
                         image_data["depth_path"] = f"depth_images/{frame_id}_depth.png"
                         
                         # Save colorized depth map

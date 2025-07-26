@@ -49,8 +49,8 @@ class VisionDetector:
         self.vision_thresholds = config.vision_thresholds
     
     @handle_vision_errors("target object detection")
-    def detect_target_object(self, bgr_image: np.ndarray, object_type: str, color: str) -> Tuple[Optional[Tuple[Tuple[int, int], float]], Dict[str, np.ndarray]]:
-        """Detect target object using hybrid approach combining best practices.
+    def detect_target_object(self, bgr_image: np.ndarray, object_type: str, color: str) -> Tuple[Optional[Tuple[Tuple[int, int], float, Tuple[int, int, int, int]]], Dict[str, np.ndarray]]:
+        """Detect target object using shape-first approach.
         
         Args:
             bgr_image: Input BGR image
@@ -59,28 +59,54 @@ class VisionDetector:
             
         Returns:
             Tuple of (detection_result, debug_images):
-            - detection_result: ((x, y), confidence) tuple or None if no object detected
+            - detection_result: ((x, y), confidence, (x, y, w, h)) tuple or None if no object detected
+              where (x, y) is the centroid and (x, y, w, h) is the bounding rectangle
             - debug_images: Dictionary containing debug visualization images
         """
-        # Step 1: Preprocessing
-        hsv_image, initial_mask = self._preprocess_image_for_detection(bgr_image, color)
+        # Create HSV image for color filtering
+        hsv_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2HSV)
         
-        # Step 2: Morphological processing
-        final_mask = self._apply_morphological_operations(initial_mask)
+        # Create initial color mask for debugging purposes
+        initial_mask = self._create_color_mask_unified(hsv_image, color)
         
-        # Step 3: Object detection and validation (now returns radius too)
-        detection_with_radius = self._detect_and_validate_objects(bgr_image, final_mask, object_type)
+        # Step 1: Shape Detection with color guidance (hybrid approach)
+        shape_candidates = self._detect_shapes_in_image(bgr_image, object_type, color)
         
-        # Extract detection result and radius for visualization
-        if detection_with_radius:
-            centroid, confidence, radius = detection_with_radius
-            detection_result = (centroid, confidence)  # Keep original format for compatibility
-        else:
-            detection_result = None
-            radius = None
+        # If no shape candidates found, return early with debug images
+        if not shape_candidates:
+            self.logger.log_debug(f"No shape candidates found for {object_type}")
+            detection_visualization = self._create_detection_visualization(bgr_image, None, color, object_type, None)
+            return None, {"initial_mask": initial_mask, "final_mask": initial_mask, "detection_visualization": detection_visualization}
         
-        # Step 4: Create detection visualization (now with actual radius)
-        detection_visualization = self._create_detection_visualization(bgr_image, detection_result, color, object_type, radius)
+        # Step 2: Color Filtering (Secondary) - Only within detected shapes
+        valid_targets = self._filter_shapes_by_color(shape_candidates, color, hsv_image)
+        
+        # Step 3: Target Validation and Ranking
+        detection_result = self._validate_and_rank_targets(valid_targets)
+        
+        # Get bounding rectangle for visualization if we have a valid detection
+        bounding_rect = None
+        if detection_result and valid_targets:
+            # Find the target with matching centroid
+            for target in valid_targets:
+                centroid, confidence, area, contour = target
+                if centroid == detection_result[0]:  # Match by centroid
+                    x, y, w, h = cv2.boundingRect(contour)
+                    bounding_rect = (x, y, w, h)
+                    # Update detection result to include bounding rectangle
+                    detection_result = (detection_result[0], detection_result[1], bounding_rect)
+                    break
+        
+        # Step 4: Create detection visualization with bounding rectangle
+        detection_visualization = self._create_detection_visualization(
+            bgr_image, detection_result, color, object_type, bounding_rect
+        )
+        
+        # Create final mask for debugging (combine all valid target masks)
+        final_mask = np.zeros_like(initial_mask)
+        if valid_targets:
+            for _, _, _, contour in valid_targets:
+                cv2.drawContours(final_mask, [contour], 0, 255, -1)
         
         # Step 5: Create debug images dictionary
         debug_images = {
@@ -89,25 +115,26 @@ class VisionDetector:
             "detection_visualization": detection_visualization
         }
         
-        # Step 6: Save debug images if recording (delegated to camera manager)
+        # Step 6: Save debug images if recording
         if self._should_save_debug_images():
             self._request_debug_image_save(bgr_image, initial_mask, final_mask, detection_result, color, object_type)
         
         # Log detection results
         if detection_result:
-            centroid, confidence = detection_result
-            self.logger.log_debug(f"Hybrid detection successful: {color} {object_type} at {centroid} with confidence {confidence:.3f}, radius {radius:.1f}")
+            centroid, confidence, rect = detection_result
+            self.logger.log_debug(f"Shape-first detection successful: {color} {object_type} at {centroid} with confidence {confidence:.3f}, bbox {rect}")
         else:
-            self.logger.log_debug(f"Hybrid detection failed: no valid {color} {object_type} found")
+            self.logger.log_debug(f"Shape-first detection failed: no valid {color} {object_type} found")
         
         return detection_result, debug_images
     
-    def _detect_shapes_in_image(self, bgr_image: np.ndarray, object_type: str) -> List[Tuple]:
+    def _detect_shapes_in_image(self, bgr_image: np.ndarray, object_type: str, color: str = None) -> List[Tuple]:
         """Detect shapes in the image matching the specified object type.
         
         Args:
             bgr_image: Input BGR image
             object_type: Type of object to find
+            color: Optional color to guide edge detection
             
         Returns:
             List of (contour, shape_type, confidence, centroid) tuples
@@ -115,30 +142,72 @@ class VisionDetector:
         # Convert to grayscale for shape detection
         gray = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2GRAY)
         
-        # Apply Gaussian blur to reduce noise
-        kernel_size = self.vision_thresholds["gaussian_kernel"]
+        # Apply Gaussian blur to reduce noise - using (3,3) or (5,5) as recommended
+        kernel_size = (5, 5)  # Reduced from (11,11) to avoid over-smoothing
         blurred = cv2.GaussianBlur(gray, kernel_size, 0)
         
-        # Edge detection
-        canny_low, canny_high = self.vision_thresholds["canny_thresholds"]
-        edges = cv2.Canny(blurred, canny_low, canny_high)
+        # Edge detection with adjusted Canny thresholds (20,60) as recommended
+        edges = cv2.Canny(blurred, 20, 60)
+        
+        # If color is provided, use color information to guide edge detection
+        if color:
+            # Convert to HSV for color detection
+            hsv_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2HSV)
+            
+            # Create color mask
+            color_mask = self._create_color_mask_unified(hsv_image, color)
+            
+            # Apply color mask to edges (hybrid color-edge approach)
+            masked_edges = cv2.bitwise_and(edges, color_mask)
+            
+            # Use masked edges for contour detection
+            edges = masked_edges
+        
+        # Add morphological operations to connect edge fragments
+        kernel = np.ones((3, 3), np.uint8)
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
         
         # Find contours
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        shape_candidates = []
-        min_area = self.vision_thresholds["min_area"]
+        # Debug: Log number of contours found
+        self.logger.log_info(f"Shape detection: Found {len(contours)} contours in edge image")
         
-        for contour in contours:
-            # Filter by area (avoid tiny contours)
+        shape_candidates = []
+        
+        for i, contour in enumerate(contours):
+            # Get area and bounding rectangle
             area = cv2.contourArea(contour)
-            if area < min_area:
-                continue
+            x, y, w, h = cv2.boundingRect(contour)
             
-            # Validate shape candidate
-            shape_info = self._validate_shape_candidate(contour, object_type)
-            if shape_info:
-                shape_candidates.append(shape_info)
+            # Debug: Log contour area
+            self.logger.log_info(f"Shape detection: Contour {i} area = {area:.1f} pixels")
+            
+            # Use bounding rectangle approach instead of strict polygon approximation
+            aspect_ratio = w / h if h > 0 else 0
+            
+            # Validate using aspect ratio and minimum area
+            if 0.7 < aspect_ratio < 1.3 and area > self.vision_thresholds["min_area"]:
+                # Calculate centroid
+                M = cv2.moments(contour)
+                if M["m00"] != 0:
+                    cx = int(M["m10"] / M["m00"])
+                    cy = int(M["m01"] / M["m00"])
+                    centroid = (cx, cy)
+                    
+                    # Determine shape type based on aspect ratio
+                    shape_type = "square" if 0.9 < aspect_ratio < 1.1 else "rectangle"
+                    
+                    # Calculate confidence based on area
+                    confidence = min(1.0, area / 10000.0)
+                    
+                    shape_candidates.append((contour, shape_type, confidence, centroid))
+                    
+                    # Debug: Log valid shape candidate
+                    self.logger.log_info(f"Shape detection: Valid {shape_type} found at {centroid} with confidence {confidence:.2f}")
+        
+        # Debug: Log total valid shapes found
+        self.logger.log_info(f"Shape detection: Found {len(shape_candidates)} valid {object_type} shapes")
         
         return shape_candidates
     
@@ -152,12 +221,21 @@ class VisionDetector:
         Returns:
             (contour, shape_type, confidence, centroid) tuple or None
         """
+        # DEBUG Checking
+        area = cv2.contourArea(contour)
+        self.logger.log_debug(f"Validating contour with area {area}")
+        
         # Approximate contour to polygon
         epsilon = self.vision_thresholds["polygon_epsilon"] * cv2.arcLength(contour, True)
         approx = cv2.approxPolyDP(contour, epsilon, True)
         
+        # DEBUG Checking
+        self.logger.log_debug(f"Polygon approximation: {len(approx)} vertices (need 4)")
+        
         # Look for 4-sided polygons (rectangles/squares)
         if len(approx) != 4:
+            # DEBUG Checking
+            self.logger.log_debug("❌ Rejected: Not 4 vertices")
             return None
         
         # Get bounding rectangle
@@ -213,9 +291,19 @@ class VisionDetector:
             hsv_image: HSV version of the input image
             
         Returns:
-            List of valid target tuples (centroid, confidence, area)
+            List of valid target tuples (centroid, confidence, area, contour)
         """
         valid_targets = []
+        
+        # Debug: Log color filtering start
+        self.logger.log_info(f"Color filtering: Starting with {len(shape_candidates)} shape candidates for color '{color}'")
+        
+        # Debug: Log HSV ranges being used
+        color_ranges = self._get_color_ranges(color)
+        if isinstance(color_ranges, list):
+            self.logger.log_info(f"Color filtering: Using dual HSV ranges for '{color}': {color_ranges}")
+        else:
+            self.logger.log_info(f"Color filtering: Using HSV range for '{color}': {color_ranges}")
         
         for i, candidate in enumerate(shape_candidates):
             contour, shape_type, confidence, centroid = candidate
@@ -236,7 +324,9 @@ class VisionDetector:
             
             if total_pixels > 0:
                 color_match_ratio = color_pixels / total_pixels
-                self.logger.log_debug(f"  Color match: {color_pixels}/{total_pixels} = {color_match_ratio:.2f} ({color_match_ratio * 100:.1f}%)")
+                
+                # Debug: Log color match details
+                self.logger.log_info(f"Color filtering: Shape {i} - {color_pixels}/{total_pixels} pixels match '{color}' ({color_match_ratio:.2f} or {color_match_ratio * 100:.1f}%)")
                 
                 # Require sufficient color match
                 if color_match_ratio > self.color_match_threshold:
@@ -244,12 +334,18 @@ class VisionDetector:
                     shape_weight, color_weight = self.vision_thresholds["confidence_weights"]
                     overall_confidence = (confidence * shape_weight) + (color_match_ratio * color_weight)
                     area = cv2.contourArea(contour)
-                    valid_targets.append((centroid, overall_confidence, area))
-                    self.logger.log_debug(f"  ✅ Valid target! Overall confidence: {overall_confidence:.2f}, area: {area}")
+                    valid_targets.append((centroid, overall_confidence, area, contour))
+                    
+                    # Debug: Log valid target
+                    self.logger.log_info(f"Color filtering: ✅ Valid target! Shape {i} - {shape_type} at {centroid} with confidence {overall_confidence:.2f}, area {area}")
                 else:
-                    self.logger.log_debug(f"  ❌ Color match too low: {color_match_ratio:.2f} < {self.color_match_threshold}")
+                    # Debug: Log color match failure
+                    self.logger.log_info(f"Color filtering: ❌ Shape {i} - Color match too low: {color_match_ratio:.2f} < threshold {self.color_match_threshold}")
             else:
                 self.logger.log_debug(f"  ❌ No pixels in shape mask")
+        
+        # Debug: Log final results
+        self.logger.log_info(f"Color filtering: Found {len(valid_targets)} valid targets matching '{color}'")
         
         return valid_targets
     
@@ -257,27 +353,42 @@ class VisionDetector:
         """Validate and rank targets, returning the best one.
         
         Args:
-            valid_targets: List of (centroid, confidence, area) tuples
+            valid_targets: List of (centroid, confidence, area, contour) tuples
             
         Returns:
             ((x, y), confidence) tuple or None
         """
         if not valid_targets:
+            # Debug: Log no valid targets
+            self.logger.log_info("Target validation: No valid targets to rank")
             return None
+        
+        # Debug: Log all valid targets before ranking
+        self.logger.log_info(f"Target validation: Ranking {len(valid_targets)} valid targets")
+        for i, target in enumerate(valid_targets):
+            centroid, confidence, area, _ = target
+            self.logger.log_info(f"Target validation: Target {i} - centroid={centroid}, confidence={confidence:.2f}, area={area}")
         
         # Return the largest valid target (highest area)
         best_target = max(valid_targets, key=lambda x: x[2])  # Sort by area
-        centroid, confidence, area = best_target
+        centroid, confidence, area, _ = best_target
         
-        self.logger.log_debug(f"Best target: centroid={centroid}, confidence={confidence:.2f}, area={area}")
+        # Debug: Log best target
+        self.logger.log_info(f"Target validation: Best target selected - centroid={centroid}, confidence={confidence:.2f}, area={area}")
         
         # Apply size threshold
         min_area = self.vision_thresholds["min_area"]
+        
+        # Debug: Log size threshold check
+        self.logger.log_info(f"Target validation: Size threshold check - area {area} vs min_area {min_area}")
+        
         if area > min_area:
-            self.logger.log_debug(f"✅ Target passes size threshold (area {area} > {min_area})")
+            # Debug: Log successful validation
+            self.logger.log_info(f"Target validation: ✅ Target passes size threshold (area {area} > {min_area})")
             return (centroid, confidence)
         else:
-            self.logger.log_debug(f"❌ Target too small (area {area} < {min_area})")
+            # Debug: Log size threshold failure
+            self.logger.log_info(f"Target validation: ❌ Target too small (area {area} < {min_area})")
             return None
     
     def _create_color_mask_unified(self, hsv_image: np.ndarray, color: str) -> np.ndarray:
@@ -443,98 +554,6 @@ class VisionDetector:
         
         return mask_final
     
-    def _detect_and_validate_objects(self, bgr_image: np.ndarray, mask: np.ndarray, object_type: str) -> Optional[Tuple[Tuple[int, int], float, float]]:
-        """Detect and validate objects using hybrid approach.
-        
-        Args:
-            bgr_image: Original BGR image
-            mask: Processed binary mask
-            object_type: Target object type
-            
-        Returns:
-            ((x, y), confidence, radius) tuple or None if no valid object found
-        """
-        # Find contours
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # DEBUG: Log contour information - REMOVE AFTER DEBUGGING
-        self.logger.log_info(f"DEBUG: Found {len(contours)} contours for {object_type}")
-        
-        if not contours:
-            # DEBUG: Log when no contours found - REMOVE AFTER DEBUGGING
-            self.logger.log_info("DEBUG: No contours found in mask")
-            return None
-        
-        best_candidate = None
-        highest_confidence = 0.0
-        best_radius = 0.0
-        
-        # DEBUG: Track all candidates for analysis - REMOVE AFTER DEBUGGING
-        debug_candidates = []
-        
-        for i, contour in enumerate(contours):
-            # Yahboom's circular method
-            (cx, cy), radius = cv2.minEnclosingCircle(contour)
-            area = cv2.contourArea(contour)
-            
-            # DEBUG: Log detailed contour information - REMOVE AFTER DEBUGGING
-            self.logger.log_info(f"DEBUG: Contour {i}: area={area:.1f}, radius={radius:.1f}, center=({cx:.1f},{cy:.1f})")
-            
-            if radius > self.vision_thresholds["min_radius"]:
-                # DEBUG: Log radius check pass - REMOVE AFTER DEBUGGING
-                self.logger.log_info(f"DEBUG: Contour {i} passed radius check (radius={radius:.1f} > {self.vision_thresholds['min_radius']})")
-                
-                # MEDAL-LAB's shape validation for precision
-                shape_valid = self._validate_object_shape(contour, object_type)
-                
-                # DEBUG: Log shape validation result - REMOVE AFTER DEBUGGING
-                self.logger.log_info(f"DEBUG: Contour {i} shape validation: {shape_valid}")
-                
-                if shape_valid:
-                    # Calculate confidence
-                    confidence = min(1.0, area / 1000.0)
-                    
-                    # DEBUG: Log confidence calculation details - REMOVE AFTER DEBUGGING
-                    self.logger.log_info(f"DEBUG: Contour {i} confidence calculation: area={area:.1f} -> confidence={confidence:.3f} (threshold={self.confidence_threshold})")
-                    
-                    debug_candidates.append({
-                        "contour_id": i,
-                        "area": area,
-                        "radius": radius,
-                        "center": (cx, cy),
-                        "confidence": confidence,
-                        "passes_threshold": confidence > self.confidence_threshold
-                    })
-                    
-                    if confidence > highest_confidence and confidence > self.confidence_threshold:
-                        highest_confidence = confidence
-                        best_candidate = (int(cx), int(cy))
-                        best_radius = radius
-                        
-                        # DEBUG: Log new best candidate - REMOVE AFTER DEBUGGING
-                        self.logger.log_info(f"DEBUG: New best candidate: contour {i} with confidence {confidence:.3f}, radius {radius:.1f}")
-                else:
-                    # DEBUG: Log shape validation failure - REMOVE AFTER DEBUGGING
-                    self.logger.log_info(f"DEBUG: Contour {i} failed shape validation")
-            else:
-                # DEBUG: Log radius check failure - REMOVE AFTER DEBUGGING
-                self.logger.log_info(f"DEBUG: Contour {i} failed radius check (radius={radius:.1f} <= {self.vision_thresholds['min_radius']})")
-        
-        # DEBUG: Log final summary - REMOVE AFTER DEBUGGING
-        self.logger.log_info(f"DEBUG: Detection summary - Found {len(debug_candidates)} valid candidates, best_confidence={highest_confidence:.3f}")
-        for candidate in debug_candidates:
-            self.logger.log_info(f"DEBUG: Candidate {candidate['contour_id']}: area={candidate['area']:.1f}, confidence={candidate['confidence']:.3f}, passes_threshold={candidate['passes_threshold']}")
-        
-        if best_candidate:
-            # DEBUG: Log successful detection - REMOVE AFTER DEBUGGING
-            self.logger.log_info(f"DEBUG: Returning successful detection: {best_candidate} with confidence {highest_confidence:.3f}, radius {best_radius:.1f}")
-            return best_candidate, highest_confidence, best_radius
-        else:
-            # DEBUG: Log detection failure - REMOVE AFTER DEBUGGING
-            self.logger.log_info(f"DEBUG: No valid candidates found (highest_confidence={highest_confidence:.3f} < threshold={self.confidence_threshold})")
-        
-        return None
-    
     def _validate_object_shape(self, contour, object_type: str) -> bool:
         """Validate object shape using simplified geometric checks.
         
@@ -556,11 +575,6 @@ class VisionDetector:
         rect_area = w * h
         extent = float(area) / rect_area if rect_area > 0 else 0
         
-        # DEBUG: Log shape validation details - REMOVE AFTER DEBUGGING
-        self.logger.log_info(f"DEBUG: Shape validation for {object_type}: w={w}, h={h}, aspect_ratio={aspect_ratio:.3f}")
-        self.logger.log_info(f"DEBUG: Shape validation: area={area:.1f}, rect_area={rect_area}, extent={extent:.3f}")
-        self.logger.log_info(f"DEBUG: Bounding box: x={x}, y={y}, w={w}, h={h}")
-        
         # Check if detection is too close to image edges (likely false positive)
         edge_margin = self.vision_thresholds.get("edge_margin", 50)
         image_width, image_height = 1280, 720  # Standard camera resolution
@@ -569,46 +583,27 @@ class VisionDetector:
                            (x + w) > (image_width - edge_margin) or 
                            (y + h) > (image_height - edge_margin))
         
-        # DEBUG: Log edge check - REMOVE AFTER DEBUGGING
-        self.logger.log_info(f"DEBUG: Edge check: margin={edge_margin}, too_close={too_close_to_edge}")
-        
         if too_close_to_edge:
-            # DEBUG: Log edge rejection - REMOVE AFTER DEBUGGING
-            self.logger.log_info(f"DEBUG: Shape validation FAILED: detection too close to image edge")
             return False
         
         # Filter for good rectangular shapes
         min_extent = self.vision_thresholds["rectangle_extent"]
         
-        # DEBUG: Log extent check - REMOVE AFTER DEBUGGING
-        self.logger.log_info(f"DEBUG: Extent check: {extent:.3f} > {min_extent} = {extent > min_extent}")
-        
         if extent <= min_extent:
-            # DEBUG: Log extent failure - REMOVE AFTER DEBUGGING
-            self.logger.log_info(f"DEBUG: Shape validation FAILED: extent {extent:.3f} <= {min_extent}")
             return False
         
         # Check aspect ratio based on object type
         square_range = self.vision_thresholds["aspect_ratio_square"]
         
-        # DEBUG: Log aspect ratio check - REMOVE AFTER DEBUGGING
-        self.logger.log_info(f"DEBUG: Aspect ratio check for {object_type}: {aspect_ratio:.3f} in range {square_range}")
-        
         if object_type == "cube":
             # Should be approximately square
             is_valid = square_range[0] <= aspect_ratio <= square_range[1]
-            # DEBUG: Log cube validation result - REMOVE AFTER DEBUGGING
-            self.logger.log_info(f"DEBUG: Cube aspect ratio validation: {square_range[0]} <= {aspect_ratio:.3f} <= {square_range[1]} = {is_valid}")
             return is_valid
         elif object_type == "rectangular_prism":
             # Should be rectangular (not square)
             is_valid = aspect_ratio < square_range[0] or aspect_ratio > square_range[1]
-            # DEBUG: Log rectangular validation result - REMOVE AFTER DEBUGGING
-            self.logger.log_info(f"DEBUG: Rectangular aspect ratio validation: {aspect_ratio:.3f} outside {square_range} = {is_valid}")
             return is_valid
         
-        # DEBUG: Log default acceptance - REMOVE AFTER DEBUGGING
-        self.logger.log_info(f"DEBUG: Shape validation: accepting unknown object_type")
         return True  # Accept any shape if object_type not specified
     
     def _should_save_debug_images(self) -> bool:
@@ -641,15 +636,15 @@ class VisionDetector:
         pass
     
     def _create_detection_visualization(self, bgr_image: np.ndarray, detection_result: Optional[Tuple], 
-                                      color: str, object_type: str, radius: Optional[float] = None) -> np.ndarray:
-        """Create annotated detection visualization image.
+                                  color: str, object_type: str, bounding_rect: Optional[Tuple[int, int, int, int]] = None) -> np.ndarray:
+        """Create annotated detection visualization image with bounding rectangle.
         
         Args:
             bgr_image: Original BGR image
             detection_result: Detection result tuple or None
             color: Target color
             object_type: Target object type
-            radius: Actual radius of detected object (for proper visualization)
+            bounding_rect: Bounding rectangle (x, y, w, h) or None
             
         Returns:
             Annotated detection image showing what was detected
@@ -657,29 +652,31 @@ class VisionDetector:
         detection_image = bgr_image.copy()
         
         if detection_result:
-            centroid, confidence = detection_result
+            centroid, confidence = detection_result[:2]
             
-            # Use actual object radius for visualization, with reasonable bounds
-            if radius is not None:
-                # Scale down radius slightly for better visibility and add minimum/maximum bounds
-                vis_radius = max(15, min(int(radius * 0.8), 150))  # 80% of actual radius, bounded between 15-150px
+            # Draw bounding rectangle if available
+            if bounding_rect:
+                x, y, w, h = bounding_rect
+                # Draw rectangle with green color and 2px thickness
+                cv2.rectangle(detection_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                
+                # Draw center point
+                cv2.circle(detection_image, centroid, 5, (0, 255, 0), -1)
+                
+                # Add detection label with bounding box dimensions
+                label = f"{color} {object_type}: {confidence:.2f}"
+                label += f" ({w}x{h})"
+                
+                # Position label at top of bounding box
+                label_position = (x, y - 10) if y > 20 else (x, y + h + 20)
+                cv2.putText(detection_image, label, label_position, 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
             else:
-                vis_radius = 20  # Fallback if radius not available
-            
-            # Draw detection circle with actual object size
-            cv2.circle(detection_image, centroid, vis_radius, (0, 255, 0), 3)
-            
-            # Draw center point
-            cv2.circle(detection_image, centroid, 5, (0, 255, 0), -1)
-            
-            # Add detection label
-            label = f"{color} {object_type}: {confidence:.2f}"
-            if radius is not None:
-                label += f" (r={radius:.0f})"
-            
-            cv2.putText(detection_image, label, 
-                       (centroid[0]+vis_radius+10, centroid[1]-10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                # Fallback to just showing centroid if no bounding rect
+                cv2.circle(detection_image, centroid, 10, (0, 255, 0), 2)
+                cv2.putText(detection_image, f"{color} {object_type}: {confidence:.2f}", 
+                           (centroid[0] + 15, centroid[1] - 10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         else:
             # Draw "NO DETECTION" indicator
             cv2.putText(detection_image, "NO DETECTION", (50, 50), 
