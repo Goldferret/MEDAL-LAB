@@ -16,7 +16,7 @@ workcell_client = WorkcellClient(
 )
 
 # Target joint angles: [servo1, servo2, servo3, servo4, servo5]
-target_angles = [135, 110, 5, 0, 90]
+target_angles = [45, 110, 5, 0, 90]
 
 # Create workflow for moving robot to specific position
 move_position_workflow = WorkflowDefinition(

@@ -160,33 +160,92 @@ python3 test_queue_clearing.py
 
 ---
 
-#### `hsv_calibration_tool.py`
-**Purpose:** Interactive HSV color range calibration for object detection
+#### `interactive_image_hsv_calibrator.py`
+**Purpose:** Interactive HSV color range calibration tool with real-time preview
 
 **Features:**
-- Click-to-sample HSV values from objects
 - Real-time HSV range adjustment with trackbars
-- Live detection preview and testing
-- Export calibrated ranges for robot use
-- Support for standard DOFBOT Pro colored blocks
+- Live camera feed with color mask overlay
+- Interactive threshold tuning for optimal detection
+- Export calibrated ranges to configuration
+- Support for complex colors like red (dual-range)
+- Visual feedback for color detection quality
 
 **Usage:**
 ```bash
-python3 hsv_calibration_tool.py
+python3 interactive_image_hsv_calibrator.py
 ```
 
-**Supported Objects:**
-- Red, green, blue, yellow cubes
-- Rectangular prisms
-- Custom colored objects
+**Controls:**
+- Use trackbars to adjust HSV ranges in real-time
+- Press 'q' to quit and save current settings
+- Press 'r' to reset to default ranges
+- Live preview shows original image and color mask
 
-**Advanced Calibration Workflow:**
-1. Select color to calibrate (R/G/B/Y keys)
-2. Click on objects to sample HSV values across different lighting
-3. For red: Use SPACEBAR to switch between dual HSV ranges (spans 0°-180° boundary)
-4. Adjust ranges with trackbars for fine-tuning
-5. Test detection across all colors (T key)
-6. Save calibration data (S key)
+---
+
+#### `test_depth_vision_detection.py`
+**Purpose:** Test depth-first 3D object detection with real camera data
+
+**Features:**
+- Tests the complete depth-first detection pipeline
+- 3D object segmentation with table plane fitting
+- Shape classification and dimension validation
+- Color validation on detected 3D objects
+- Debug visualization showing detection process
+- Coordinate translation verification (depth→RGB space)
+
+**Usage:**
+```bash
+python3 test_depth_vision_detection.py
+```
+
+**What It Tests:**
+- Depth image preprocessing and noise reduction
+- Table plane fitting and object extraction
+- 3D shape classification (cubes vs rectangular prisms)
+- Color matching within detected object regions
+- Coordinate space translation accuracy
+
+---
+
+#### `test_rotated_cube_detection.py`
+**Purpose:** Specialized test for detecting rotated cubes at various angles
+
+**Features:**
+- Tests cube detection at different rotation angles
+- Validates dimension estimation for rotated objects
+- Aspect ratio analysis for diamond-shaped projections
+- Rotation-aware validation thresholds
+- Performance metrics for rotated vs face-on cubes
+
+**Usage:**
+```bash
+python3 test_rotated_cube_detection.py
+```
+
+**Validation Focus:**
+- 45° rotated cubes (diamond projection)
+- Perspective distortion handling
+- Dimension estimation accuracy
+- Shape confidence scoring
+
+---
+
+#### `object_detection_calibration.py`
+**Purpose:** Comprehensive object detection calibration and validation tool
+
+**Features:**
+- Multi-object detection testing
+- Calibration parameter optimization
+- Detection accuracy measurement
+- Threshold validation across scenarios
+- Performance benchmarking
+
+**Usage:**
+```bash
+python3 object_detection_calibration.py
+```
 
 ----
 
@@ -197,7 +256,7 @@ python3 hsv_calibration_tool.py
 - Automated position cycling through [180°, 135°, 90°, 45°, 0°] servo angles
 - Direct Arm_Lib.py integration with proper torque management
 - Interactive Enter-to-advance interface for controlled calibration
-- Perfect companion tool for `hsv_calibration_tool.py`
+- Perfect companion tool for `interactive_image_hsv_calibrator.py`
 - Safe torque enable/disable on startup/shutdown
 
 **Usage:**
@@ -214,7 +273,7 @@ python3 position_cycler.py
 
 **Integration with HSV Calibration:**
 - Run `position_cycler.py` in one terminal
-- Run `hsv_calibration_tool.py` in another terminal
+- Run `interactive_image_hsv_calibrator.py` in another terminal
 - Advance robot positions while sampling colors at each angle
 - Captures lighting variations across all robot viewing positions
 
@@ -245,7 +304,7 @@ python3 diagnose_orbbec_device.py
 ### 3. Vision System Setup
 ```bash
 # Calibrate HSV ranges for your lighting
-python3 hsv_calibration_tool.py
+python3 interactive_image_hsv_calibrator.py
 
 # Test vision-based robot actions
 curl -X POST http://localhost:2000/action/scan_for_target \
@@ -263,7 +322,7 @@ curl -X POST http://localhost:2000/action/scan_for_target \
 ### Poor Vision Performance
 1. Recalibrate camera with `calibrate_depth_camera.py`
 2. Validate calibration with `validate_camera_calibration.py`
-3. Adjust HSV ranges with `hsv_calibration_tool.py`
+3. Adjust HSV ranges with `interactive_image_hsv_calibrator.py`
 4. Test under actual working conditions
 
 ### Robot Actions Failing
@@ -370,11 +429,11 @@ Options:
   --duration FLOAT         Test duration in seconds (default: 10.0)
 ```
 
-### hsv_calibration_tool.py
+### interactive_image_hsv_calibrator.py
 ```bash
-python3 hsv_calibration_tool.py
+python3 interactive_image_hsv_calibrator.py
 # Interactive tool - no command line options
-# Use mouse and trackbars for calibration
+# Use trackbars for real-time HSV calibration
 ```
 
 ### position_cycler.py

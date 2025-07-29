@@ -29,7 +29,7 @@ class RobotArmConfig(RestNodeConfig):
     
     # Detection thresholds
     position_threshold: int = 5  # pixels
-    confidence_threshold: float = 0.7
+    confidence_threshold: float = 0.6  # Lowered from 0.7 to accommodate recording workflow operational distances
     color_match_threshold: float = 0.6
     
     # Movement settings
@@ -50,14 +50,14 @@ class RobotArmConfig(RestNodeConfig):
         "edge_margin": 50,                  # Kept the same - minimum distance from image edges
     }
     
-    # HSV color ranges (calibrated)
+    # HSV color ranges (calibrated with interactive tool across all positions)
     color_hsv_ranges: Dict[str, HSVRanges] = {
-        "green": ((41, 72, 0), (96, 255, 153)),
-        "blue": ((100, 122, 0), (118, 255, 192)),
-        "yellow": ((17, 97, 78), (32, 225, 247)),
+        "green": ((27, 87, 22), (99, 255, 139)),
+        "blue": ((96, 73, 12), (126, 255, 218)),
+        "yellow": ((16, 80, 85), (30, 255, 255)),  # Lowered S min from 134 to 80
         "red": [
-            ((0, 59, 46), (10, 255, 210)),
-            ((170, 59, 46), (179, 255, 211)),
+            ((0, 137, 62), (10, 255, 182)),         # From calibrated_hsv_ranges_red.json
+            ((170, 137, 62), (179, 255, 182)),      # From calibrated_hsv_ranges_red.json
         ]
     }
     

@@ -39,7 +39,7 @@ demo_workflow = WorkflowDefinition(
             action="scan_for_target",
             args={
                 "object_type": "cube", # cube or rectangular_prism
-                "color": "blue"
+                "color": "yellow"
             }
         ),
         StepDefinition(
