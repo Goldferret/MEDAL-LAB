@@ -19,7 +19,7 @@ from queue import Queue, Empty
 import threading
 from functools import wraps
 
-# Try to import Orbbec SDK
+# Try to import Orbbec SDK (basic components first)
 try:
     from pyorbbecsdk import Pipeline, Config, OBSensorType, OBFormat, FrameSet, OBError, OBAlignMode
     ORBBEC_SDK_AVAILABLE = True
@@ -32,6 +32,16 @@ except ImportError:
     FrameSet = None
     OBError = None
     OBAlignMode = None
+
+# Try to import additional SDK components for device properties
+ORBBEC_PROPERTIES_AVAILABLE = False
+if ORBBEC_SDK_AVAILABLE:
+    try:
+        from pyorbbecsdk import OBPropertyID
+        ORBBEC_PROPERTIES_AVAILABLE = True
+    except ImportError:
+        ORBBEC_PROPERTIES_AVAILABLE = False
+        OBPropertyID = None
 
 
 def require_valid_frame(func):
@@ -90,9 +100,15 @@ class CameraManager:
         self._scanning_session_id = None
         self._is_scanning_active = False  # Flag to indicate scanning is in progress
         
+        # Depth filtering components (using device properties instead of filter classes)
+        self.depth_filtering_enabled = False
+        self.device = None  # Will store device reference for property access
+        
         # Initialize camera if available
         if ORBBEC_SDK_AVAILABLE:
             self._init_dual_pipeline_system()
+            # Initialize depth filtering after pipeline setup
+            self._init_depth_filtering()
         else:
             self.logger.log_warning("Orbbec SDK not available - using fallback camera")
     
@@ -120,6 +136,49 @@ class CameraManager:
         self._start_recording_pipeline()
         
         self.logger.log_info("Dual pipeline system initialized successfully")
+    
+    def _init_depth_filtering(self):
+        """Initialize depth filtering using device properties instead of filter classes."""
+        if not ORBBEC_SDK_AVAILABLE:
+            self.logger.log_info("Orbbec SDK not available - depth filtering disabled")
+            return
+            
+        try:
+            # Get device reference from pipeline
+            if hasattr(self.scanning_pipeline, 'get_device'):
+                self.device = self.scanning_pipeline.get_device()
+            elif hasattr(self.recording_pipeline, 'get_device'):
+                self.device = self.recording_pipeline.get_device()
+            else:
+                self.logger.log_info("Cannot get device reference - depth filtering disabled")
+                return
+            
+            # Enable software depth filtering if available
+            if ORBBEC_PROPERTIES_AVAILABLE and self.device:
+                try:
+                    # Enable software depth filter (equivalent to spatial filtering)
+                    self.device.set_bool_property(OBPropertyID.OB_PROP_DEPTH_SOFT_FILTER_BOOL, True)
+                    self.logger.log_info("Software depth filtering enabled")
+                    self.depth_filtering_enabled = True
+                except Exception as e:
+                    self.logger.log_info(f"Software depth filtering not supported: {e}")
+            
+            if not self.depth_filtering_enabled:
+                self.logger.log_info("Using enhanced software-based depth processing")
+                self.depth_filtering_enabled = True  # Enable our custom processing
+                
+        except Exception as e:
+            self.logger.log_error(f"Failed to initialize depth filtering: {e}")
+            self.depth_filtering_enabled = False
+    
+    def _apply_depth_filtering(self, depth_frame):
+        """Apply enhanced depth processing using available methods."""
+        if not self.depth_filtering_enabled or depth_frame is None:
+            return depth_frame
+        
+        # Since hardware filters aren't available, we'll enhance the existing processing
+        # The actual filtering will be done in the processing pipeline with OpenCV
+        return depth_frame
     
     def _setup_recording_streams(self):
         """Setup recording pipeline streams (same as original setup)."""
@@ -466,7 +525,7 @@ class CameraManager:
             return None, None, None, None
     
     def _process_scanning_frameset(self, frameset):
-        """Process scanning frameset with proper depth scaling."""
+        """Process scanning frameset with enhanced depth filtering."""
         rgb_image = None
         depth_image = None
         depth_colormap = None
@@ -478,41 +537,91 @@ class CameraManager:
             if color_frame:
                 rgb_image = self.frame_to_bgr_image(color_frame)
 
-            # Process depth frame if available (optional for scanning)
+            # Process depth frame with enhanced filtering
             depth_frame = frameset.get_depth_frame()
             if depth_frame:
                 try:
-                    width = depth_frame.get_width()
-                    height = depth_frame.get_height()
-                    scale = depth_frame.get_depth_scale()
+                    filtered_depth_frame = self._apply_depth_filtering(depth_frame)
                     
-                    # Get raw uint16 depth data
-                    depth_data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
+                    width = filtered_depth_frame.get_width()
+                    height = filtered_depth_frame.get_height()
+                    scale = filtered_depth_frame.get_depth_scale()
+                    
+                    depth_data = np.frombuffer(filtered_depth_frame.get_data(), dtype=np.uint16)
                     depth_image_raw = depth_data.reshape((height, width))
                     
-                    # *** APPLY OVERFLOW CORRECTION ON RAW UINT16 DATA ***
+                    if self.depth_filtering_enabled:
+                        depth_image_raw = self._apply_enhanced_depth_processing(depth_image_raw, rgb_image)
+                    
                     depth_image_corrected = self._correct_uint16_overflow_artifacts(depth_image_raw)
                     
-                    # Convert corrected depth to actual values in millimeters
                     depth_image = depth_image_corrected.astype(np.float32) * scale
                     
-                    # Apply existing depth range filtering
                     MIN_DEPTH, MAX_DEPTH = 20, 3000
                     depth_image = np.where((depth_image > MIN_DEPTH) & (depth_image < MAX_DEPTH), depth_image, 0)
                         
-                    # Create colorized depth map using actual depth values (normalize from float32)
+                    # Create colorized depth map
                     depth_normalized = cv2.normalize(depth_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
                     depth_colormap = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
                         
-                    self.logger.log_info(f"Processed depth frame with scale factor: {scale}")
+                    self.logger.log_info(f"Enhanced depth processing: filtering={self.depth_filtering_enabled}, scale={scale}")
                     
                 except Exception as e:
-                    self.logger.log_info(f"Error processing scanning depth frame: {e}")
+                    self.logger.log_error(f"Enhanced depth processing failed: {e}")
 
         except Exception as e:
-            self.logger.log_error(f"Error processing scanning frameset: {e}")
+            self.logger.log_error(f"Error processing enhanced scanning frameset: {e}")
 
         return rgb_image, depth_image, depth_colormap, point_cloud
+    
+    def _apply_enhanced_depth_processing(self, depth_image_raw, rgb_image=None):
+        """Apply enhanced OpenCV-based depth processing to reduce artifacts."""
+        try:
+            # Convert to float for processing
+            depth_float = depth_image_raw.astype(np.float32)
+            
+            # Apply bilateral filter for edge-preserving smoothing
+            if rgb_image is not None:
+                # Use RGB as guide for joint bilateral filtering (if available)
+                try:
+                    if hasattr(cv2, 'ximgproc') and hasattr(cv2.ximgproc, 'jointBilateralFilter'):
+                        gray = cv2.cvtColor(rgb_image, cv2.COLOR_BGR2GRAY) if len(rgb_image.shape) == 3 else rgb_image
+                        if gray.shape != depth_float.shape:
+                            gray = cv2.resize(gray, (depth_float.shape[1], depth_float.shape[0]))
+                        
+                        depth_float = cv2.ximgproc.jointBilateralFilter(
+                            joint=gray.astype(np.float32),
+                            src=depth_float,
+                            d=5, sigmaColor=50, sigmaSpace=50
+                        )
+                        self.logger.log_debug("Applied joint bilateral filter")
+                    else:
+                        # Fallback to standard bilateral filter
+                        depth_float = cv2.bilateralFilter(depth_float, 5, 50, 50)
+                        self.logger.log_debug("Applied bilateral filter")
+                except Exception as e:
+                    self.logger.log_debug(f"Bilateral filtering failed: {e}")
+            
+            # Apply median filter to reduce salt-and-pepper noise
+            depth_float = cv2.medianBlur(depth_float.astype(np.uint16), 3).astype(np.float32)
+            
+            # Apply morphological operations to fill small holes
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            mask = (depth_float > 0).astype(np.uint8)
+            mask_closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+            
+            # Fill small holes using inpainting
+            holes_mask = (mask_closed - mask).astype(np.uint8)
+            if np.any(holes_mask):
+                depth_normalized = cv2.normalize(depth_float, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                depth_inpainted = cv2.inpaint(depth_normalized, holes_mask, 3, cv2.INPAINT_TELEA)
+                depth_float = depth_inpainted.astype(np.float32) * (np.max(depth_float) / 255.0)
+            
+            return depth_float.astype(np.uint16)
+            
+        except Exception as e:
+            self.logger.log_error(f"Enhanced depth processing failed: {e}")
+            return depth_image_raw
     
     def _correct_uint16_overflow_artifacts(self, depth_raw):
         """

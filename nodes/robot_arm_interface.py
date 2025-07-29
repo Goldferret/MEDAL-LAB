@@ -180,9 +180,9 @@ class RobotArmInterface:
                         self.logger.log_warning(f"No frame received at position {position} - continuing to next position")
                         continue
                     
-                    # STEP 2: Pass Frame to Vision Detector (enhanced with debug images)
+                    # STEP 2: Pass Frame to Vision Detector (enhanced with depth-first detection)
                     detection_result, debug_images = self.vision_detector.detect_target_object(
-                        rgb_image, object_type, color
+                        rgb_image, object_type, color, depth_image
                     )
                     
                     # STEP 3: Collect Return Values and Debug Data
@@ -340,11 +340,13 @@ class RobotArmInterface:
             # Note: capture_synchronized_data() already returns BGR format
             bgr_image = rgb_image  # Actually BGR format despite variable name
             
-            # Detect colored object
-            hsv_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2HSV)
-            detected_centroid = self.vision_detector.detect_colored_object_yahboom(
-                bgr_image, None, None, object_color
+            # Detect colored object using robust depth-first detection
+            detection_result, debug_images = self.vision_detector.detect_target_object(
+                bgr_image, "cube", object_color, depth_image
             )
+            
+            # Extract centroid from detection result
+            detected_centroid = detection_result[0] if detection_result else None
             
             if detected_centroid is None:
                 consecutive_detections = 0
