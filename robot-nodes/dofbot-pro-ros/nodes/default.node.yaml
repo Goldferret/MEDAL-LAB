@@ -1,0 +1,7 @@
+node_name: DOFBOT_Pro_1
+node_id: 01K901ZPWBYHQH2HN9SS5M74C8
+node_description: ROS-based DOFBOT Pro robot arm with MoveIT integration
+node_type: device
+module_name: dofbot_ros_node
+module_version: 0.0.1
+capabilities: null

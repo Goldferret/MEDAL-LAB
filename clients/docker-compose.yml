@@ -1,0 +1,24 @@
+services:
+  madsci_client:
+    image: ghcr.io/ad-sdl/madsci:v0.5.0
+    container_name: madsci_client
+    network_mode: host
+    env_file:
+      - ../.env.global
+    volumes:
+      - ./workflows:/home/madsci/workflows
+      - ./experiments:/home/madsci/experiments
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    command: >
+      bash -c "
+        echo '=== MADSci Client Environment ===' &&
+        echo 'Workcell Server: $$WORKCELL_SERVER_URL' &&
+        echo 'Experiment Server: $$EXPERIMENT_SERVER_URL' &&
+        echo 'Data Server: $$DATA_SERVER_URL' &&
+        echo '' &&
+        echo 'Ready to submit workflows and experiments!' &&
+        echo 'Usage: docker exec -it madsci_client bash' &&
+        tail -f /dev/null
+      "

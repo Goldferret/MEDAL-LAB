@@ -1,0 +1,37 @@
+name: dofbot-pro-ros
+
+services:
+  dofbot_pro_ros:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host  # Required for Arch Linux with systemd-resolved
+      args:
+        USER_ID: ${USER_ID:-1000}
+        GROUP_ID: ${GROUP_ID:-1000}
+    container_name: dofbot-pro-ros-node
+    network_mode: host
+    env_file:
+      - ../../.env.global
+      - .env
+    environment:
+      - PYTHONPATH=/opt/ros/noetic/lib/python3/dist-packages:$PYTHONPATH
+      - ROS_HOSTNAME=localhost
+      - ROS_IP=
+    volumes:
+      # Mount host ROS message packages for MD5 compatibility
+      # These override conda's packages to ensure exact message definition match
+      - /opt/ros/noetic/lib/python3/dist-packages/moveit_msgs:/opt/conda/envs/rosenv/lib/python3.9/site-packages/moveit_msgs:ro
+      - /opt/ros/noetic/lib/python3/dist-packages/geometry_msgs:/opt/conda/envs/rosenv/lib/python3.9/site-packages/geometry_msgs:ro
+      - /opt/ros/noetic/lib/python3/dist-packages/std_msgs:/opt/conda/envs/rosenv/lib/python3.9/site-packages/std_msgs:ro
+      - /opt/ros/noetic/lib/python3/dist-packages/actionlib_msgs:/opt/conda/envs/rosenv/lib/python3.9/site-packages/actionlib_msgs:ro
+      - /opt/ros/noetic/lib/python3/dist-packages/sensor_msgs:/opt/conda/envs/rosenv/lib/python3.9/site-packages/sensor_msgs:ro
+      - /opt/ros/noetic/lib/python3/dist-packages/trajectory_msgs:/opt/conda/envs/rosenv/lib/python3.9/site-packages/trajectory_msgs:ro
+      - /opt/ros/noetic/lib/python3/dist-packages/shape_msgs:/opt/conda/envs/rosenv/lib/python3.9/site-packages/shape_msgs:ro
+      
+      # Application code
+      - ./nodes:/home/madsci/nodes
+      - /opt/ros/noetic/lib/python3/dist-packages:/opt/ros/noetic/lib/python3/dist-packages:ro
+    stdin_open: true
+    tty: true
+    command: /opt/conda/envs/rosenv/bin/python -u nodes/dofbot_ros_node.py

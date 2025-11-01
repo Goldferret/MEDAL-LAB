@@ -12,7 +12,7 @@ root_dir = pathlib.Path(__file__).parent.parent
 load_dotenv(root_dir / '.env')
 
 workcell_client = WorkcellClient(
-    workcell_server_url=os.getenv("WORKCELL_MANAGER_URL", "http://localhost:8005")
+    os.getenv("WORKCELL_MANAGER_URL", "http://localhost:8005")
 )
 
 # Create workflow for this demonstration
@@ -39,7 +39,7 @@ demo_workflow = WorkflowDefinition(
             action="scan_for_target",
             args={
                 "object_type": "cube", # cube or rectangular_prism
-                "color": "yellow"
+                "color": "blue"
             }
         ),
         StepDefinition(

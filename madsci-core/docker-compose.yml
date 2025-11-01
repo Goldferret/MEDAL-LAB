@@ -1,0 +1,167 @@
+name: madsci_core
+
+# MADSci Core Server - Complete Framework Stack
+# Includes all managers (lab, event, experiment, resource, data, location, workcell)
+# and all required databases (mongodb, redis, postgres, minio)
+
+# Common configuration for MADSci services
+x-madsci-service: &madsci-service
+  image: ghcr.io/ad-sdl/madsci:v0.5.0
+  environment:
+    - USER_ID=${USER_ID:-1000}
+    - GROUP_ID=${GROUP_ID:-1000}
+  network_mode: host
+  env_file:
+    - ../.env.global
+    - .env
+  volumes:
+    - ./managers:/home/madsci/medal-lab/managers
+    - ../.madsci:/home/madsci/.madsci
+  restart: unless-stopped
+  working_dir: /home/madsci/medal-lab
+
+services:
+  # === DATABASES ===
+  
+  mongodb:
+    container_name: mongodb
+    image: mongo:8.0
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ../.madsci/mongodb:/data/db
+
+  redis:
+    container_name: redis
+    image: redis:7.4
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ../.madsci/redis:/data
+    command: redis-server --appendonly yes --save 900 1 --save 300 10 --save 60 10000
+
+  postgres:
+    container_name: postgres
+    image: postgres:17
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - POSTGRES_USER=madsci
+      - POSTGRES_PASSWORD=madsci
+      - POSTGRES_DB=resources
+    volumes:
+      - ../.madsci/postgres:/var/lib/postgresql/data
+
+  minio:
+    container_name: minio
+    image: minio/minio
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - ../.madsci/minio:/home/madsci/.madsci/minio
+    command: server /home/madsci/.madsci/minio --console-address ":${MINIO_CONSOLE_PORT}"
+
+  # === MANAGERS ===
+
+  event_manager:
+    <<: *madsci-service
+    container_name: event_manager
+    environment:
+      - USER_ID=${USER_ID:-1000}
+      - GROUP_ID=${GROUP_ID:-1000}
+      - EVENT_HOST=${EVENT_HOST:-0.0.0.0}
+      - EVENT_PORT=${EVENT_SERVER_PORT}
+      - EVENT_MANAGER_DEFINITION=/home/madsci/medal-lab/managers/event/event.manager.yaml
+    command: python -m madsci.event_manager.event_server --host ${EVENT_HOST} --port ${EVENT_SERVER_PORT}
+    depends_on:
+      - mongodb
+
+  resource_manager:
+    <<: *madsci-service
+    container_name: resource_manager
+    environment:
+      - USER_ID=${USER_ID:-1000}
+      - GROUP_ID=${GROUP_ID:-1000}
+      - RESOURCE_HOST=${RESOURCE_HOST:-0.0.0.0}
+      - RESOURCE_PORT=${RESOURCE_SERVER_PORT}
+      - RESOURCE_MANAGER_DEFINITION=/home/madsci/medal-lab/managers/resource/resource.manager.yaml
+    command: python -m madsci.resource_manager.resource_server --host ${RESOURCE_HOST} --port ${RESOURCE_SERVER_PORT}
+    depends_on:
+      - postgres
+      - event_manager
+
+  data_manager:
+    <<: *madsci-service
+    container_name: data_manager
+    environment:
+      - USER_ID=${USER_ID:-1000}
+      - GROUP_ID=${GROUP_ID:-1000}
+      - DATA_HOST=${DATA_HOST:-0.0.0.0}
+      - DATA_PORT=${DATA_SERVER_PORT}
+      - DATA_MANAGER_DEFINITION=/home/madsci/medal-lab/managers/data/data.manager.yaml
+    command: python -m madsci.data_manager.data_server --host ${DATA_HOST} --port ${DATA_SERVER_PORT}
+    depends_on:
+      - mongodb
+      - event_manager
+
+  experiment_manager:
+    <<: *madsci-service
+    container_name: experiment_manager
+    environment:
+      - USER_ID=${USER_ID:-1000}
+      - GROUP_ID=${GROUP_ID:-1000}
+      - EXPERIMENT_HOST=${EXPERIMENT_HOST:-0.0.0.0}
+      - EXPERIMENT_PORT=${EXPERIMENT_SERVER_PORT}
+      - EXPERIMENT_MANAGER_DEFINITION=/home/madsci/medal-lab/managers/experiment/experiment.manager.yaml
+    command: python -m madsci.experiment_manager.experiment_server --name "MEDAL-LAB Experiment Manager" --host ${EXPERIMENT_HOST} --port ${EXPERIMENT_SERVER_PORT}
+    depends_on:
+      - mongodb
+      - lab_manager
+
+  workcell_manager:
+    <<: *madsci-service
+    container_name: workcell_manager
+    environment:
+      - USER_ID=${USER_ID:-1000}
+      - GROUP_ID=${GROUP_ID:-1000}
+      - WORKCELL_HOST=${WORKCELL_HOST:-0.0.0.0}
+      - WORKCELL_PORT=${WORKCELL_SERVER_PORT}
+      - WORKCELL_MANAGER_DEFINITION=/home/madsci/medal-lab/managers/workcell/workcell.manager.yaml
+    command: python -m madsci.workcell_manager.workcell_server --host ${WORKCELL_HOST} --port ${WORKCELL_SERVER_PORT}
+    depends_on:
+      - redis
+      - mongodb
+      - resource_manager
+      - event_manager
+      - postgres
+
+  location_manager:
+    <<: *madsci-service
+    container_name: location_manager
+    environment:
+      - USER_ID=${USER_ID:-1000}
+      - GROUP_ID=${GROUP_ID:-1000}
+      - LOCATION_HOST=${LOCATION_HOST:-0.0.0.0}
+      - LOCATION_PORT=${LOCATION_SERVER_PORT}
+      - LOCATION_MANAGER_DEFINITION=/home/madsci/medal-lab/managers/location/location.manager.yaml
+    command: python -m madsci.location_manager.location_server --name "MEDAL-LAB Location Manager" --host ${LOCATION_HOST} --port ${LOCATION_SERVER_PORT}
+    depends_on:
+      - redis
+
+  # Lab Manager (Dashboard) - Uses different image
+  lab_manager:
+    <<: *madsci-service
+    container_name: lab_manager
+    image: ghcr.io/ad-sdl/madsci_dashboard:v0.5.0
+    environment:
+      - USER_ID=${USER_ID:-1000}
+      - GROUP_ID=${GROUP_ID:-1000}
+      - LAB_HOST=${LAB_HOST:-0.0.0.0}
+      - LAB_PORT=${LAB_SERVER_PORT}
+      - LAB_MANAGER_DEFINITION=/home/madsci/medal-lab/managers/lab/lab.manager.yaml
+    command: python -m madsci.squid.lab_server --name "MEDAL-LAB" --host ${LAB_HOST} --port ${LAB_SERVER_PORT}
+    depends_on:
+      - event_manager

@@ -73,8 +73,19 @@ temp/
 .env
 .env.local
 .env.*.local
+.env.global
 # Keep .env.example for reference
 
+# Allow MADSci core defaults (not sensitive)
+!madsci-core/.env
+
+# Allow robot node ROS defaults (not sensitive)
+!robot-nodes/dofbot-pro-ros/.env
+
 # MADSci specific
+.madsci/
 trajectory_*/
 *.trajectory
+
+# Extra directories
+context/

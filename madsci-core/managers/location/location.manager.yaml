@@ -1,0 +1,6 @@
+name: MEDAL-LAB Location Manager
+description: MEDAL-LAB physical location and spatial coordination management
+manager_id: 01JVDFED2K18FVF0E7JM7SX10G
+manager_type: location_manager
+locations: []
+transfer_capabilities: null

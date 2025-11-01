@@ -1,0 +1,7 @@
+name: MEDAL-LAB Resource Manager
+description: MEDAL-LAB laboratory resource and inventory management
+manager_id: 01JVDFED2K18FVF0E7JM7SX10E
+manager_type: resource_manager
+resource_manager_id: 01JVDFED2K18FVF0E7JM7SX10E
+default_templates: []
+db_url: postgresql://madsci:madsci@localhost:5432/resources
