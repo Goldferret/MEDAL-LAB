@@ -34,4 +34,7 @@ services:
       - /opt/ros/noetic/lib/python3/dist-packages:/opt/ros/noetic/lib/python3/dist-packages:ro
     stdin_open: true
     tty: true
-    command: /opt/conda/envs/rosenv/bin/python -u nodes/dofbot_ros_node.py
+    command: >
+      bash -c "
+        /opt/conda/envs/rosenv/bin/python -u nodes/dofbot_ros_node.py
+      "

@@ -183,7 +183,26 @@ nodes/
 
 ## Available Actions
 
-Test actions via HTTP:
+### Basic Actions
+
+- **`move_to_position`** - Move robot to specified joint positions (5 angles in radians)
+- **`home_robot`** - Move robot to home position
+- **`get_current_position`** - Query current joint positions
+
+### Gripper Actions
+
+- **`open_gripper`** - Open gripper to release objects
+- **`close_gripper`** - Close gripper to grasp objects
+
+### Vision Actions
+
+- **`capture_camera_image`** - Capture image from camera and store in Data Manager
+
+### Compound Actions
+
+- **`swap_blocks`** - Swap blocks between two locations using a temporary location (requires location IDs)
+
+### Testing Basic Actions
 
 ```bash
 # Home robot
@@ -199,6 +218,8 @@ curl -X POST http://192.168.1.77:2000/action/move_to_position \
 curl -X POST http://192.168.1.77:2000/action/get_current_position \
   -H "Content-Type: application/json" -d '{"args": {}}'
 ```
+
+**Note:** For advanced actions (gripper, camera, swap), see the block permutation experiment in `../../clients/experiments/` which demonstrates these actions in complete workflows.
 
 ## Resource Tracking
 
@@ -256,14 +277,6 @@ Robot uses: `Arm1_Joint`, `Arm2_Joint`, `Arm3_Joint`, `Arm4_Joint`, `Arm5_Joint`
 - Usually means MADSci services are unavailable
 - Verify MADSci core is running: `make madsci-logs`
 - Node will auto-recover when services come back online
-
-## Next Steps
-
-- Add gripper control actions (open/close)
-- Integrate camera via ROS topics for vision
-- Create pick/place workflows
-- Add collision avoidance
-- Implement trajectory recording/playback
 
 ## Related
 

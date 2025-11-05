@@ -48,7 +48,8 @@ RUN git clone --depth 1 --branch v0.5.0 https://github.com/AD-SDL/MADSci.git && 
 # Install MADSci as editable packages in conda environment
 RUN pip install -e /home/madsci/MADSci/src/madsci_common && \
     pip install -e /home/madsci/MADSci/src/madsci_client && \
-    pip install -e /home/madsci/MADSci/src/madsci_node_module
+    pip install -e /home/madsci/MADSci/src/madsci_node_module && \
+    pip install opencv-python-headless rosbags-image
 
 # Clean up to reduce image size
 RUN conda clean -afy && \

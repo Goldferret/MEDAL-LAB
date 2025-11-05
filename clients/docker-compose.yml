@@ -8,6 +8,7 @@ services:
     volumes:
       - ./workflows:/home/madsci/workflows
       - ./experiments:/home/madsci/experiments
+      - ./outputs:/home/madsci/outputs
     stdin_open: true
     tty: true
     restart: unless-stopped

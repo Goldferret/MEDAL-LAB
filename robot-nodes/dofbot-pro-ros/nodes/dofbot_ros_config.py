@@ -40,10 +40,10 @@ class DofbotRosConfig(RestNodeConfig):
     goal_tolerance: float = 0.01
     """Overall goal tolerance."""
     
-    max_velocity_scaling_factor: float = 1.0
+    max_velocity_scaling_factor: float = 3.0
     """Maximum velocity scaling (0.0-1.0, where 1.0 is full speed)."""
     
-    max_acceleration_scaling_factor: float = 1.0
+    max_acceleration_scaling_factor: float = 3.0
     """Maximum acceleration scaling (0.0-1.0, where 1.0 is full acceleration)."""
     
     # ========================================================================

@@ -43,6 +43,11 @@ class DofbotRosInterface:
         self.move_client.wait_for_server()
         self.logger.log("Connected to move_group action server")
         
+        # Create separate action client for gripper
+        self.gripper_client = actionlib.SimpleActionClient('/move_group', MoveGroupAction)
+        self.logger.log("Gripper action client initialized")
+        self.logger.log("MoveIT action client initialized and configured")
+        
         # Subscribe to joint states for current position
         self.current_joint_state = None
         self.joint_state_sub = rospy.Subscriber(
@@ -148,3 +153,85 @@ class DofbotRosInterface:
         except Exception as e:
             self.logger.log_error(f"Failed to get joint values: {str(e)}")
             return []
+    
+    def move_gripper(self, gripper_positions: list[float]) -> bool:
+        """
+        Move gripper to specified positions using MoveIT.
+        
+        Args:
+            gripper_positions: List of 3 gripper joint angles in radians
+            
+        Returns:
+            True if movement successful, False otherwise
+        """
+        try:
+            # Create goal message
+            goal = MoveGroupGoal()
+            
+            # Set planning group for gripper
+            goal.request.group_name = "grip_group"
+            
+            # Set planning parameters
+            goal.request.num_planning_attempts = self.config.num_planning_attempts
+            goal.request.allowed_planning_time = self.config.planning_time
+            goal.request.max_velocity_scaling_factor = self.config.max_velocity_scaling_factor
+            goal.request.max_acceleration_scaling_factor = self.config.max_acceleration_scaling_factor
+            
+            # Create joint constraints for gripper
+            constraints = Constraints()
+            # Only control the main grip_joint, others are mechanically linked
+            constraint = JointConstraint()
+            constraint.joint_name = 'grip_joint'
+            constraint.position = gripper_positions[0]  # Use first value for grip_joint
+            constraint.tolerance_above = self.config.goal_tolerance
+            constraint.tolerance_below = self.config.goal_tolerance
+            constraint.weight = 1.0
+            constraints.joint_constraints.append(constraint)
+            
+            goal.request.goal_constraints.append(constraints)
+            
+            # Set planning options
+            goal.planning_options.plan_only = False  # Plan and execute
+            
+            # Send goal and wait for result
+            self.logger.log(f"Sending gripper goal to {gripper_positions}")
+            self.gripper_client.send_goal(goal)
+            
+            # Wait for result with timeout
+            finished = self.gripper_client.wait_for_result(rospy.Duration(10.0))
+            
+            if not finished:
+                self.logger.log_error("Gripper movement timed out after 10 seconds")
+                return False
+            
+            # Check result
+            state = self.gripper_client.get_state()
+            
+            if state == actionlib.GoalStatus.SUCCEEDED:
+                self.logger.log("Gripper movement completed successfully")
+                return True
+            else:
+                self.logger.log_error(f"Gripper movement failed with state: {state}")
+                return False
+            
+        except Exception as e:
+            self.logger.log_error(f"Gripper movement failed: {str(e)}")
+            return False
+    
+    def capture_camera_image(self):
+        """
+        Capture image from ROS camera topic.
+        
+        Returns:
+            numpy array in BGR format, or None on failure
+        """
+        import rospy
+        from sensor_msgs.msg import Image
+        from rosbags.image import message_to_cvimage
+        
+        try:
+            img_msg = rospy.wait_for_message('/camera/color/image_raw', Image, timeout=5.0)
+            return message_to_cvimage(img_msg, 'bgr8')
+        except Exception as e:
+            self.logger.log_error(f"Camera capture failed: {str(e)}")
+            return None
