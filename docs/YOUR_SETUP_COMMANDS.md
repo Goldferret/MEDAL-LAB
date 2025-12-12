@@ -25,25 +25,19 @@ nodes:
       - vision
 ```
 
-### 2. Transfer Files to Robot
+### 2. Setup Robot (You Already Have the Repo!)
 
-From central computer:
-```bash
-cd ~/MEDAL-LAB
-scp -r robot-nodes/dofbot-pro-ros/nodes robot@192.168.1.234:~/madsci_node/
-```
-
-### 3. Create Environment File on Robot
+Since you already have MEDAL-LAB via git on the robot, you just need config:
 
 SSH to robot:
 ```bash
 ssh robot@192.168.1.234
 ```
 
-Then create `.env` file:
+Create environment file:
 ```bash
-mkdir -p ~/madsci_node
-cat > ~/madsci_node/.env << 'EOF'
+mkdir -p ~/robot_config
+cat > ~/robot_config/.env << 'EOF'
 # UPDATE THE NEXT LINE WITH YOUR CENTRAL COMPUTER'S IP!
 CENTRAL_COMPUTER_IP=192.168.1.XXX
 
@@ -63,12 +57,25 @@ To find your central computer's IP:
 hostname -I | awk '{print $1}'
 ```
 
+### 3. Create Robot Startup Script
+
+Still on robot (via SSH):
+```bash
+cat > ~/start_robot_node.sh << 'EOF'
+#!/bin/bash
+echo "Starting MADSci Robot Node..."
+export $(cat ~/robot_config/.env | xargs)
+cd ~/MEDAL-LAB/robot-nodes/dofbot-pro-ros/nodes
+python3 dofbot_ros_node.py
+EOF
+
+chmod +x ~/start_robot_node.sh
+```
+
 ### 4. Install Dependencies on Robot
 
 ```bash
-# On robot (via SSH):
-ssh robot@192.168.1.234
-cd ~/madsci_node/nodes
+# Still on robot:
 pip3 install madsci-client opencv-python numpy
 ```
 
@@ -91,9 +98,7 @@ curl http://localhost:8005/health
 **Terminal 2 - Robot** (SSH and start robot node):
 ```bash
 ssh robot@192.168.1.234
-cd ~/madsci_node/nodes
-export $(cat ../.env | xargs)
-python3 dofbot_ros_node.py
+~/start_robot_node.sh
 ```
 *Leave this running!*
 
@@ -241,8 +246,8 @@ echo "✓ MADSci services running"
 echo ""
 echo "Next steps:"
 echo "  1. SSH to robot: ssh robot@192.168.1.234"
-echo "  2. Run: cd ~/madsci_node/nodes && export \$(cat ../.env | xargs) && python3 dofbot_ros_node.py"
-echo "  3. Then run: cd ~/MEDAL-LAB/clients/experiments && python3 block_combination_solver_experiment.py"
+echo "  2. Run: ~/start_robot_node.sh"
+echo "  3. Then run experiment: cd ~/MEDAL-LAB/clients/experiments && python3 block_combination_solver_experiment.py"
 echo ""
 ```
 
