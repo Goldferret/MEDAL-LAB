@@ -21,12 +21,34 @@ Robot Computer IP:   192.168.1.234    (your robot)
 
 ### On Central Computer
 
+#### Create Environment Configuration File
+```bash
+cd ~/MEDAL-LAB
+
+# Create .env.global file with required environment variables
+cat > .env.global << 'EOF'
+# MADSci Core Services Ports
+EXPERIMENT_SERVER_PORT=8002
+RESOURCE_SERVER_PORT=8003
+DATA_SERVER_PORT=8004
+WORKCELL_SERVER_PORT=8005
+LOCATION_SERVER_PORT=8006
+EVENT_SERVER_PORT=8007
+LAB_SERVER_PORT=8008
+MINIO_CONSOLE_PORT=9001
+EOF
+```
+- [ ] Environment file created at `~/MEDAL-LAB/.env.global`
+
 #### Install MADSci Services
 ```bash
 cd ~/MEDAL-LAB/madsci-core
-docker-compose up -d
+
+# Start services (use docker compose or docker-compose)
+docker compose up -d
+# OR if above fails: docker-compose up -d
 ```
-- [ ] All services running (`docker-compose ps`)
+- [ ] All services running (check with `docker compose ps` or `docker-compose ps`)
 
 #### Configure Workcell
 Edit: `madsci-core/managers/workcell/example_wc.workcell.yaml`
@@ -79,10 +101,17 @@ DOFBOT_PRO_1_URL=http://192.168.1.234:2000/  # Your robot IP
 ```bash
 # On central computer:
 cd ~/MEDAL-LAB/madsci-core
-docker-compose up -d
+
+# Use docker compose (newer) or docker-compose (older)
+docker compose up -d
+# OR if above fails: docker-compose up -d
+
+# Wait a few seconds for services to start
+sleep 5
 ```
-- [ ] Services started
+- [ ] Services started without errors
 - [ ] Health check passes: `curl http://localhost:8002/health`
+- [ ] Workcell check passes: `curl http://localhost:8005/health`
 
 ### Step 2: Start Robot Node
 ```bash
@@ -156,7 +185,8 @@ curl http://192.168.1.100:8002/health
 ```bash
 # Restart workcell manager:
 cd ~/MEDAL-LAB/madsci-core
-docker-compose restart workcell-manager
+docker compose restart workcell-manager
+# OR: docker-compose restart workcell-manager
 ```
 
 ### ROS Not Running
@@ -185,7 +215,8 @@ rostopic echo /camera/color/image_raw --noarr
 
 # 3. Stop central services:
 cd ~/MEDAL-LAB/madsci-core
-docker-compose down
+docker compose down
+# OR: docker-compose down
 ```
 
 ---
@@ -233,7 +264,8 @@ Network:     _________________________
 ### Check Status
 ```bash
 # Central services
-docker-compose ps
+docker compose ps
+# OR: docker-compose ps
 
 # Robot node
 curl http://192.168.1.234:2000/health
@@ -245,7 +277,8 @@ curl http://192.168.1.234:2000/health
 ### View Logs
 ```bash
 # Central services
-docker-compose logs -f workcell-manager
+docker compose logs -f workcell-manager
+# OR: docker-compose logs -f workcell-manager
 
 # Robot node (if running as service)
 journalctl -u madsci-robot-node -f
@@ -255,7 +288,8 @@ journalctl -u madsci-robot-node -f
 ```bash
 # Central
 cd ~/MEDAL-LAB/madsci-core
-docker-compose restart
+docker compose restart
+# OR: docker-compose restart
 
 # Robot
 # Ctrl+C then restart python3 dofbot_ros_node.py
@@ -627,7 +661,7 @@ Error: No blocks detected in initial scan
 ```bash
 # === Terminal 1: Central Services ===
 cd ~/MEDAL-LAB/madsci-core
-docker-compose up -d
+docker compose up -d
 sleep 5
 curl http://localhost:8005/health
 
@@ -646,7 +680,7 @@ python3 block_combination_solver_experiment.py
 # Terminal 2: Ctrl+C
 # Terminal 1: 
 cd ~/MEDAL-LAB/madsci-core
-docker-compose down
+docker compose down
 ```
 
 ---

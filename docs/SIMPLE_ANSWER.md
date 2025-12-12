@@ -49,8 +49,11 @@ EOF
 
 chmod +x ~/start_robot_node.sh
 
-# Install dependencies (if not already installed)
+# Install dependencies (REQUIRED!)
 pip3 install madsci-client opencv-python numpy
+
+# Verify madsci is installed
+python3 -c "import madsci; print('MADSci OK')"
 ```
 
 ### Daily Operation
