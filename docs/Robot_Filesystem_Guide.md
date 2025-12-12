@@ -8,7 +8,7 @@ You have the **entire MEDAL-LAB repository** on the robot computer via git. This
 
 ## What the Robot Actually Runs
 
-### ✅ Files That Execute on Robot
+### Files That Execute on Robot
 
 **Only these 4 files run on the robot:**
 
@@ -29,34 +29,34 @@ MEDAL-LAB/
 
 ## What the Robot Does NOT Run
 
-### ❌ Files That Stay on Robot But Don't Execute
+### Files That Stay on Robot But Don't Execute
 
 Everything else in the repo can be there but won't run:
 
 ```
 MEDAL-LAB/
-├── madsci-core/                    ❌ Runs on CENTRAL, not robot
+├── madsci-core/                    [Runs on CENTRAL, not robot]
 │   ├── docker-compose.yml
 │   └── managers/
 │
-├── clients/                        ❌ Runs on CENTRAL, not robot
+├── clients/                        [Runs on CENTRAL, not robot]
 │   └── experiments/
 │       ├── block_combination_solver_experiment.py
 │       └── helpers/
 │
-├── docs/                           ❌ Just documentation
+├── docs/                           [Just documentation]
 │   ├── Deployment_Guide.md
 │   └── ...
 │
-├── reference-scripts/              ❌ Reference only
+├── reference-scripts/              [Reference only]
 │
 └── robot-nodes/
-    ├── dofbot-pro-archived/        ❌ Archived, not used
+    ├── dofbot-pro-archived/        [Archived, not used]
     └── dofbot-pro-ros/
-        ├── docker-compose.yml      ❌ Not needed (no Docker on robot)
-        ├── Dockerfile              ❌ Not needed
-        ├── README.md               ❌ Just documentation
-        └── nodes/                  ✅ THIS IS THE ONLY DIRECTORY USED
+        ├── docker-compose.yml      [Not needed (no Docker on robot)]
+        ├── Dockerfile              [Not needed]
+        ├── README.md               [Just documentation]
+        └── nodes/                  [THIS IS THE ONLY DIRECTORY USED]
 ```
 
 ---
@@ -68,14 +68,14 @@ MEDAL-LAB/
 **Current state: Full MEDAL-LAB repo on robot**
 
 **Advantages:**
-- ✅ Easy to update with `git pull`
-- ✅ Can reference docs on robot
-- ✅ Consistent with central computer
-- ✅ No risk of missing dependencies
+- Easy to update with `git pull`
+- Can reference docs on robot
+- Consistent with central computer
+- No risk of missing dependencies
 
 **Disadvantages:**
-- ⚠️ Uses ~50MB extra disk space (negligible)
-- ⚠️ Cluttered directory structure
+- Uses ~50MB extra disk space (negligible)
+- Cluttered directory structure
 
 **What to do:**
 ```bash
@@ -98,7 +98,7 @@ chmod +x ~/start_robot_node.sh
 ~/start_robot_node.sh
 ```
 
-✅ **RECOMMENDED** - Easiest to maintain with git
+**RECOMMENDED** - Easiest to maintain with git
 
 ---
 
@@ -107,14 +107,14 @@ chmod +x ~/start_robot_node.sh
 **Only copy the 4 files needed**
 
 **Advantages:**
-- ✅ Clean filesystem
-- ✅ Clear what's running
-- ✅ Minimal disk usage
+- Clean filesystem
+- Clear what's running
+- Minimal disk usage
 
 **Disadvantages:**
-- ⚠️ Must manually sync when files change
-- ⚠️ Can't use git pull
-- ⚠️ More maintenance work
+- Must manually sync when files change
+- Can't use git pull
+- More maintenance work
 
 **Setup:**
 ```bash
@@ -134,13 +134,13 @@ nano ~/madsci_node/.env_dir/.env
 # (add environment variables)
 ```
 
-⚠️ **NOT RECOMMENDED** - More work to maintain
+**NOT RECOMMENDED** - More work to maintain
 
 ---
 
 ## What You Should Do
 
-### 🎯 Recommended Approach: Keep Full Repo + Simple Script
+### Recommended Approach: Keep Full Repo + Simple Script
 
 Since you already have the full repo via git, just create a simple startup script:
 
@@ -423,32 +423,32 @@ That's literally it! Everything else runs on central computer.
 
 ## Summary
 
-### ✅ Current Setup is Good!
+### Current Setup is Good!
 
 Having the full MEDAL-LAB repo on the robot via git is actually the **recommended approach** because:
 
-1. ✅ Easy to update (`git pull`)
-2. ✅ Consistent with central computer
-3. ✅ Documentation available on robot
-4. ✅ No risk of version mismatches
-5. ✅ Negligible disk space usage
+1. Easy to update (`git pull`)
+2. Consistent with central computer
+3. Documentation available on robot
+4. No risk of version mismatches
+5. Negligible disk space usage
 
-### 🎯 What You Need to Do
+### What You Need to Do
 
 1. **Create environment file**: `~/robot_config/.env`
 2. **Create startup script**: `~/start_robot_node.sh`
 3. **Update central computer IP** in the env file
 4. **Run the startup script**: `~/start_robot_node.sh`
 
-### 🚫 What You DON'T Need to Do
+### What You DON'T Need to Do
 
-1. ❌ Delete anything from the repo
-2. ❌ Copy files around
-3. ❌ Install experiment dependencies on robot
-4. ❌ Run Docker on robot
-5. ❌ Run any experiment scripts on robot
+1. Delete anything from the repo
+2. Copy files around
+3. Install experiment dependencies on robot
+4. Run Docker on robot
+5. Run any experiment scripts on robot
 
-### 📝 The Robot's Job
+### The Robot's Job
 
 The robot computer has **ONE job**:
 - Run `dofbot_ros_node.py` which listens for commands and controls hardware
@@ -464,5 +464,5 @@ The robot computer has **ONE job**:
 2. Create `~/start_robot_node.sh` startup script  
 3. Run `~/start_robot_node.sh` when you need the robot
 
-Simple, maintainable, and follows best practices! 🎯
+Simple, maintainable, and follows best practices!
 

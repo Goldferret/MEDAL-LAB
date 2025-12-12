@@ -268,7 +268,7 @@ chmod +x ~/start_everything.sh
 - [ ] Services healthy on central
 - [ ] Robot node running and showing "startup complete"
 - [ ] Test connection successful
-- [ ] Ready to run experiment! 🚀
+- [ ] Ready to run experiment!
 
 ---
 

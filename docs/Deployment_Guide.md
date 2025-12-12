@@ -737,5 +737,5 @@ Hardware (Robot)
 - ✓ Test movement works
 - ✓ Experiment can reach robot node
 
-Now you can run the full block combination solver experiment! 🎉
+Now you can run the full block combination solver experiment!
 

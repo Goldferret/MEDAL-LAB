@@ -8,10 +8,10 @@ You already have the full MEDAL-LAB repo on the robot via git. **That's perfect!
 
 ```
 ~/MEDAL-LAB/robot-nodes/dofbot-pro-ros/nodes/
-├── dofbot_ros_node.py         ← The main script
-├── dofbot_ros_interface.py    ← Imported by main script
-├── dofbot_ros_config.py       ← Imported by main script
-└── default.node.yaml          ← Read by main script
+├── dofbot_ros_node.py         [The main script]
+├── dofbot_ros_interface.py    [Imported by main script]
+├── dofbot_ros_config.py       [Imported by main script]
+└── default.node.yaml          [Read by main script]
 ```
 
 Everything else in the repo just sits there unused (which is fine!).
@@ -31,7 +31,7 @@ mkdir -p ~/robot_config
 
 # Create environment file (UPDATE THE IP!)
 cat > ~/robot_config/.env << 'EOF'
-CENTRAL_COMPUTER_IP=192.168.1.XXX    # ← Change this!
+CENTRAL_COMPUTER_IP=192.168.1.XXX    # Change this!
 EXPERIMENT_SERVER_URL=http://${CENTRAL_COMPUTER_IP}:8002
 RESOURCE_SERVER_URL=http://${CENTRAL_COMPUTER_IP}:8003
 DATA_SERVER_URL=http://${CENTRAL_COMPUTER_IP}:8004
@@ -72,12 +72,12 @@ python3 block_combination_solver_experiment.py
 
 ## What Executes Where
 
-### 🤖 Robot Computer
+### Robot Computer
 **Runs:** `dofbot_ros_node.py`
 **Job:** Listen for commands, control hardware
 **CPU:** ~5% (just waiting for commands)
 
-### 💻 Central Computer  
+### Central Computer  
 **Runs:** Experiment scripts, MADSci services
 **Job:** Decision making, data processing, orchestration
 **CPU:** ~20-40% (doing all the thinking)
@@ -139,17 +139,17 @@ Central Computer                     Robot Computer
 
 ## What You DON'T Need to Do
 
-❌ Don't delete anything from the robot's MEDAL-LAB repo  
-❌ Don't copy files around  
-❌ Don't run experiments on robot  
-❌ Don't run Docker on robot  
-❌ Don't install experiment dependencies on robot  
+- Don't delete anything from the robot's MEDAL-LAB repo  
+- Don't copy files around  
+- Don't run experiments on robot  
+- Don't run Docker on robot  
+- Don't install experiment dependencies on robot  
 
 ---
 
 ## Summary
 
-**Current state:** ✅ Good!
+**Current state:** Good!
 - Full repo on robot via git
 - Easy to update with `git pull`
 
@@ -158,7 +158,7 @@ Central Computer                     Robot Computer
 - Create `~/start_robot_node.sh` (startup script)
 - Run `~/start_robot_node.sh` when needed
 
-**That's it!** 🎯
+**That's it!**
 
 See full details: `docs/Robot_Filesystem_Guide.md`
 
