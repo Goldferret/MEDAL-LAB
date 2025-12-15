@@ -1,0 +1,23 @@
+# Extended MADSci Docker Image with OpenCV
+# Extends the official MADSci image to add dependencies for block combination solver
+
+FROM ghcr.io/ad-sdl/madsci:latest
+
+# Install additional Python packages needed for experiments
+RUN pip3 install --no-cache-dir \
+    opencv-python-headless \
+    numpy \
+    scikit-image
+
+# Optional: Install system packages if needed
+# RUN apt-get update && apt-get install -y \
+#     libgl1-mesa-glx \
+#     libglib2.0-0 \
+#     && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /home/madsci
+
+# Default command
+CMD ["/bin/bash"]
+
