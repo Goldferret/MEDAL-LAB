@@ -50,6 +50,12 @@ cp .env.global.example .env.global
 # - DOFBOT_PRO_1_HOST: IP of Jetson running robot node
 ```
 
+**Also update robot node URLs in workcell definition:**
+```bash
+# Edit madsci-core/managers/example_workcell.manager.yaml
+# Update the nodes section with your actual robot IP addresses
+```
+
 ### 2. Start MADSci Core Services
 
 On your host computer:
