@@ -78,7 +78,7 @@ madsci-up:
 		echo "$(RED)ERROR: $(ENV_FILE) not found!$(NC)"; \
 		exit 1; \
 	fi
-	cd $(MADSCI_DIR) && docker compose --env-file=../$(ENV_FILE) up -d
+	cd $(MADSCI_DIR) && docker compose --env-file=../$(ENV_FILE) --env-file=.env up -d
 	@echo "$(GREEN)✓ MADSci core services started$(NC)"
 
 madsci-down:
