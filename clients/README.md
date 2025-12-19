@@ -13,6 +13,14 @@ The client workstation is used for:
 
 ## Usage
 
+### First Time Setup
+
+```bash
+# Build client image with dependencies (first run only)
+make client-build
+make client-up
+```
+
 ### Container Management
 
 ```bash
@@ -21,7 +29,20 @@ make client-down        # Stop container
 make client-restart     # Restart container
 make client-logs        # View logs
 make client-shell       # Enter interactive shell
+make client-build       # Rebuild image (after Dockerfile changes)
 ```
+
+### When to Use `make client-build`
+
+**Required for:**
+- First-time setup (installs opencv-python and other dependencies)
+- After modifying `Dockerfile` 
+- After updating base MADSci image version
+
+**Not needed for:**
+- Code changes in `workflows/` or `experiments/` (mounted as volumes)
+- Configuration changes in `.env.global`
+- Regular container restarts
 
 ### Running Scripts
 

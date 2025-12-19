@@ -66,8 +66,24 @@ See [madsci-core/README.md](madsci-core/README.md) for detailed setup.
 On your Jetson device, start ROS services then the MADSci node container. See [robot-nodes/dofbot-pro-ros/README.md](robot-nodes/dofbot-pro-ros/README.md) for complete instructions.
 
 ```bash
-make robot-up
+# Start ROS services (MoveIT, arm driver, camera) - takes ~100 seconds
+make ros-up
+
+# Start MADSci robot node
+make robot-up NODE=dofbot-pro-ros
 ```
+
+**View ROS logs (optional):**
+```bash
+make ros-attach  # Attach to tmux session
+make ros-status  # Check ROS service status
+```
+
+**tmux commands while attached:**
+- `Ctrl+b` then `d` - Detach (services keep running)
+- `Ctrl+b` then `0-3` - Switch to window (0=moveit, 1=arm_driver, 2=sim_bridge, 3=camera)
+- `Ctrl+b` then `n` - Next window
+- `Ctrl+b` then `p` - Previous window
 
 ### 4. Submit Workflows and Experiments
 

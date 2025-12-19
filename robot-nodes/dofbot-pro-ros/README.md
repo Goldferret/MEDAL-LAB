@@ -29,31 +29,40 @@ chmod +x ~/.docker/cli-plugins/docker-compose
 docker compose version  # Verify installation
 ```
 
-## Host Setup
+## Quick Start
 
-Start ROS services on the Jetson **before** starting the container:
+Start ROS services and the robot node on the Jetson:
 
 ```bash
-# Terminal 1: ROS Master
-roscore
+# 1. Start all ROS services in tmux session (~100 seconds)
+make ros-up
 
-# Terminal 2: MoveIT simulator
-roslaunch dofbot_pro_config demo.launch
-
-# Terminal 3: Arm driver (publishes joint states)
-rosrun dofbot_pro_info arm_driver.py
-
-# Terminal 4: Simulation bridge
-rosrun arm_moveit_demo SimulationToMachine.py
-
-# Optional: Camera
-roslaunch orbbec_camera dabai_dcw2.launch
+# 2. Start MADSci robot node container
+make robot-up NODE=dofbot-pro-ros
 ```
+
+**View ROS service logs (optional):**
+```bash
+make ros-attach  # Attach to tmux session
+make ros-status  # Check ROS service status
+```
+
+**tmux commands while attached:**
+- `Ctrl+b` then `d` - Detach (services keep running)
+- `Ctrl+b` then `0-3` - Switch to window (0=moveit, 1=arm_driver, 2=sim_bridge, 3=camera)
+- `Ctrl+b` then `n` - Next window
+- `Ctrl+b` then `p` - Previous window
 
 **Verify ROS is running:**
 ```bash
 rostopic list  # Should show topics like /joint_states, /move_group/*
 rosnode list   # Should show /move_group, /Arm_Driver_Node_*
+```
+
+**Stop services:**
+```bash
+make robot-down NODE=dofbot-pro-ros  # Stop robot node
+make ros-down                         # Stop ROS services
 ```
 
 ## Container Setup
@@ -82,32 +91,38 @@ ROS_MASTER_URI=http://localhost:11311
 ROS_DISTRO=noetic
 ```
 
-### Starting the Node
+## Development Workflow
 
-All robot node operations are managed through the root Makefile.
-
-**Start container (auto-starts node):**
+### Normal Operation
 ```bash
-cd /path/to/medal-lab
-make robot-up
+make ros-up                        # Start ROS services
+make robot-up NODE=dofbot-pro-ros  # Start robot node
+make robot-logs NODE=dofbot-pro-ros # Watch logs
 ```
 
-**Stop container:**
+### Code Changes
 ```bash
-make robot-down
+# 1. Edit code in ./nodes/ on host
+# 2. Restart to pick up changes
+make robot-restart NODE=dofbot-pro-ros
+make robot-logs NODE=dofbot-pro-ros  # Watch restart
 ```
 
-**Restart container:**
+### Debugging
 ```bash
-make robot-restart
+# Stop auto-start temporarily
+make robot-down NODE=dofbot-pro-ros
+
+# Edit docker-compose.yml: change command to 'tail -f /dev/null'
+cd robot-nodes/dofbot-pro-ros
+docker compose --env-file=../../.env.global up -d
+
+# Run manually with debugging
+docker exec -it dofbot-pro-ros-node bash
+/opt/conda/envs/rosenv/bin/python -u nodes/dofbot_ros_node.py
 ```
 
-**Watch logs:**
-```bash
-make robot-logs
-```
-
-**Expected startup output:**
+### Expected Startup Output
 ```
 INFO: Uvicorn running on http://0.0.0.0:2000
 INFO: ROS node initialized
@@ -122,50 +137,6 @@ INFO: DOFBOT Pro robot node startup complete
 curl http://192.168.1.77:2000/status
 # Should return: {"ready": true, "errored": false, ...}
 ```
-
-## Development Workflow
-
-### Normal Operation
-```bash
-make robot-up              # Start container + node
-make robot-logs            # Watch logs
-```
-
-### Code Changes
-```bash
-# 1. Edit code in ./nodes/ on host
-# 2. Restart to pick up changes
-make robot-restart
-make robot-logs            # Watch restart
-```
-
-### Debugging
-```bash
-# Stop auto-start temporarily
-make robot-down
-
-# Edit docker-compose.yml: change command to 'tail -f /dev/null'
-cd robot-nodes/dofbot-pro-ros
-docker compose --env-file=../../.env.global up -d
-
-# Run manually with debugging
-docker exec -it dofbot-pro-ros-node bash
-/opt/conda/envs/rosenv/bin/python -u nodes/dofbot_ros_node.py
-```
-
-### If Node Crashes
-Container will exit (no auto-restart). Check logs, fix issue, then:
-```bash
-make robot-up  # Restart container + node
-```
-
-## Auto-Reconnection
-
-The robot node automatically reconnects to MADSci services if they restart:
-- Registers resources with Resource Manager on startup
-- Re-registers if connection is lost
-- Survives `make madsci-restart` without manual intervention
-- Transitions from error state to ready state automatically
 
 ## Code Structure
 
@@ -248,24 +219,30 @@ Robot uses: `Arm1_Joint`, `Arm2_Joint`, `Arm3_Joint`, `Arm4_Joint`, `Arm5_Joint`
 
 ## Troubleshooting
 
+**ROS services not running:**
+- Start services: `make ros-up` (~100 seconds)
+- Check status: `make ros-status`
+- View logs: `make ros-attach`
+- Verify topics: `rostopic list` (should show /joint_states, /move_group/*)
+
 **Container exits immediately:**
-- Check logs: `make robot-logs`
-- Verify ROS services are running on host
+- Check logs: `make robot-logs NODE=dofbot-pro-ros`
+- Verify ROS services are running: `make ros-status`
 - Ensure `ROBOT_NODE_URL` is set in `.env`
 
 **"No joint state received yet" errors:**
-- Verify `arm_driver.py` is running and publishing to `/joint_states`
+- Verify `arm_driver.py` is running: `make ros-attach` (check arm_driver window)
 - Check: `rostopic hz /joint_states` (should show ~10 Hz)
-- Ensure `ROS_HOSTNAME=localhost` in docker-compose.yml
+- Restart ROS services: `make ros-down && make ros-up`
 
 **MoveIT planning fails:**
-- Check that `demo.launch` is running
+- Check that `demo.launch` is running: `make ros-attach` (check moveit window)
 - Verify joint names match URDF (Arm1_Joint, etc.)
-- Check MoveIT logs for planning errors
 - Ensure joint positions are within limits
+- Note: MoveIT takes ~90 seconds to fully initialize
 
 **"Connection refused" on port 2000:**
-- Verify node started: `make robot-logs`
+- Verify node started: `make robot-logs NODE=dofbot-pro-ros`
 - Check `ROBOT_NODE_URL=http://0.0.0.0:2000` in `.env`
 - Ensure no firewall blocking port 2000
 

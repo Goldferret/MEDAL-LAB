@@ -1,6 +1,7 @@
 .PHONY: help list-robots madsci-up madsci-down madsci-logs madsci-restart \
-        client-up client-down client-logs client-restart client-shell \
+        client-up client-down client-logs client-restart client-shell client-build \
         robot-up robot-down robot-logs robot-restart \
+        ros-up ros-attach ros-down ros-status \
         up down clean
 
 # Paths
@@ -42,6 +43,7 @@ help:
 	@echo "  make client-logs     - View client logs"
 	@echo "  make client-restart  - Restart client container"
 	@echo "  make client-shell    - Open interactive shell in client container"
+	@echo "  make client-build    - Rebuild client image (after Dockerfile changes)"
 	@echo ""
 	@echo "$(GREEN)Robot Nodes:$(NC)"
 	@echo "  make list-robots              - List available robot nodes"
@@ -49,6 +51,12 @@ help:
 	@echo "  make robot-down NODE=<name>   - Stop specific robot node"
 	@echo "  make robot-logs NODE=<name>   - View robot node logs"
 	@echo "  make robot-restart NODE=<name> - Restart robot node"
+	@echo ""
+	@echo "$(GREEN)ROS Services (Jetson only):$(NC)"
+	@echo "  make ros-up          - Start all ROS services with verified dependencies"
+	@echo "  make ros-attach      - Attach to ROS services tmux session"
+	@echo "  make ros-down        - Stop all ROS services"
+	@echo "  make ros-status      - Check ROS service status and diagnostics"
 	@echo ""
 	@echo "$(GREEN)Utility:$(NC)"
 	@echo "  make up              - Start MADSci core + client (not robots)"
@@ -78,7 +86,7 @@ madsci-up:
 		echo "$(RED)ERROR: $(ENV_FILE) not found!$(NC)"; \
 		exit 1; \
 	fi
-	cd $(MADSCI_DIR) && docker compose --env-file=../$(ENV_FILE) up -d
+	cd $(MADSCI_DIR) && docker compose --env-file=../$(ENV_FILE) --env-file=.env up -d
 	@echo "$(GREEN)✓ MADSci core services started$(NC)"
 
 madsci-down:
@@ -127,6 +135,15 @@ client-shell:
 	fi
 	@docker exec -it madsci_client bash
 
+client-build:
+	@echo "$(GREEN)Building client image...$(NC)"
+	@if [ ! -f $(ENV_FILE) ]; then \
+		echo "$(RED)ERROR: $(ENV_FILE) not found!$(NC)"; \
+		exit 1; \
+	fi
+	cd $(CLIENT_DIR) && docker compose build
+	@echo "$(GREEN)✓ Client image built$(NC)"
+
 # Robot Node Services
 robot-up:
 	@if [ -z "$(NODE)" ]; then \
@@ -170,6 +187,92 @@ robot-logs:
 	cd $(ROBOT_DIR)/$(NODE) && docker compose logs -f
 
 robot-restart: robot-down robot-up
+
+# ROS Services (Jetson only)
+ros-up:
+	@if tmux has-session -t ros_services 2>/dev/null; then \
+		echo "$(RED)❌ ros_services already running$(NC)"; \
+		echo "   Stop with: make ros-down"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Starting ROS services with verified dependencies...$(NC)"
+	@echo "$(CYAN)[1/4] Starting MoveIt (this takes ~100 seconds)...$(NC)"
+	@tmux new-session -d -s ros_services -n moveit
+	@tmux send-keys -t ros_services:moveit 'roslaunch dofbot_pro_config demo.launch' C-m
+	@echo "$(YELLOW)Waiting for MoveIt to initialize (checking every 5 seconds)...$(NC)"
+	@bash -c 'for i in {1..30}; do \
+		if timeout 2 rostopic list 2>/dev/null | grep -q "/move_group/goal"; then \
+			echo -e "\033[0;32m✓ MoveIt action server detected (after $$((i*5)) seconds)\033[0m"; \
+			break; \
+		fi; \
+		if [ $$i -eq 30 ]; then \
+			echo -e "\033[0;31mERROR: MoveIt failed to start after 150 seconds\033[0m"; \
+			exit 1; \
+		fi; \
+		echo "  ... still waiting (attempt $$i/30)"; \
+		sleep 5; \
+	done'
+	@echo "$(YELLOW)Waiting for MoveIt to complete initialization...$(NC)"
+	@sleep 10
+	@bash -c 'if timeout 5 rostopic echo -n 1 /move_group/status >/dev/null 2>&1; then \
+		echo -e "\033[0;32m✓ MoveIt is fully operational\033[0m"; \
+	else \
+		echo -e "\033[0;33m⚠ MoveIt started but status topic not responsive (continuing anyway)\033[0m"; \
+	fi'
+	@echo "$(CYAN)[2/4] Starting arm_driver...$(NC)"
+	@tmux new-window -t ros_services -n arm_driver
+	@tmux send-keys -t ros_services:arm_driver 'rosrun dofbot_pro_info arm_driver.py' C-m
+	@sleep 3
+	@echo "$(GREEN)✓ arm_driver started$(NC)"
+	@echo "$(CYAN)[3/4] Starting sim_bridge...$(NC)"
+	@tmux new-window -t ros_services -n sim_bridge
+	@tmux send-keys -t ros_services:sim_bridge 'rosrun arm_moveit_demo SimulationToMachine.py' C-m
+	@sleep 3
+	@echo "$(GREEN)✓ sim_bridge started$(NC)"
+	@echo "$(CYAN)[4/4] Starting camera...$(NC)"
+	@tmux new-window -t ros_services -n camera
+	@tmux send-keys -t ros_services:camera 'roslaunch orbbec_camera dabai_dcw2.launch' C-m
+	@sleep 8
+	@echo "$(YELLOW)Verifying camera stream...$(NC)"
+	@bash -c 'if timeout 10 rostopic list 2>/dev/null | grep -q "/camera/color/image_raw"; then \
+		echo -e "\033[0;32m✓ Camera topic exists\033[0m"; \
+		if timeout 5 rostopic hz /camera/color/image_raw --window=5 -n 1 >/dev/null 2>&1; then \
+			echo -e "\033[0;32m✓ Camera is publishing data\033[0m"; \
+		else \
+			echo -e "\033[0;33m⚠ Camera topic exists but no data detected yet (may need more time)\033[0m"; \
+		fi; \
+	else \
+		echo -e "\033[0;33m⚠ Camera topic not found (launch may have failed)\033[0m"; \
+	fi'
+	@echo ""
+	@echo "$(GREEN)════════════════════════════════════════════════════════$(NC)"
+	@echo "$(GREEN)✓ ROS services startup complete$(NC)"
+	@echo "$(GREEN)════════════════════════════════════════════════════════$(NC)"
+	@echo "  View logs: $(CYAN)make ros-attach$(NC)"
+	@echo "  Stop services: $(YELLOW)make ros-down$(NC)"
+
+ros-attach:
+	@tmux attach -t ros_services
+
+ros-down:
+	@tmux kill-session -t ros_services 2>/dev/null || true
+	@echo "$(GREEN)✓ ROS services stopped$(NC)"
+
+# Diagnostic target to check service status
+ros-status:
+	@echo "$(CYAN)Checking ROS service status...$(NC)"
+	@echo ""
+	@echo "$(GREEN)Topics:$(NC)"
+	@bash -c 'rostopic list 2>/dev/null | grep -E "(move_group|camera|joint)" || echo "  No relevant topics found"'
+	@echo ""
+	@echo "$(GREEN)Active nodes:$(NC)"
+	@bash -c 'rosnode list 2>/dev/null || echo "  ROS master not running"'
+	@echo ""
+	@if tmux has-session -t ros_services 2>/dev/null; then \
+		echo "$(GREEN)✓ Tmux session 'ros_services' is active$(NC)"; \
+	else \
+		echo "$(RED)✗ Tmux session 'ros_services' not found$(NC)"; \
+	fi
 
 # Convenience targets
 up: madsci-up client-up

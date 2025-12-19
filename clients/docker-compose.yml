@@ -1,6 +1,9 @@
 services:
   madsci_client:
-    image: ghcr.io/ad-sdl/madsci:v0.5.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
     container_name: madsci_client
     network_mode: host
     env_file:
