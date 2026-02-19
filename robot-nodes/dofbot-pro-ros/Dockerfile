@@ -33,6 +33,8 @@ SHELL ["conda", "run", "-n", "rosenv", "/bin/bash", "-c"]
 RUN conda install -y \
     ros-noetic-rospy \
     ros-noetic-actionlib \
+    ros-noetic-tf2-ros \
+    ros-noetic-tf2-geometry-msgs \
     -c robostack \
     -c conda-forge \
     --override-channels
@@ -49,7 +51,7 @@ RUN git clone --depth 1 --branch v0.5.0 https://github.com/AD-SDL/MADSci.git && 
 RUN pip install -e /home/madsci/MADSci/src/madsci_common && \
     pip install -e /home/madsci/MADSci/src/madsci_client && \
     pip install -e /home/madsci/MADSci/src/madsci_node_module && \
-    pip install opencv-python-headless rosbags-image
+    pip install opencv-python-headless rosbags-image "numpy<2"
 
 # Clean up to reduce image size
 RUN conda clean -afy && \

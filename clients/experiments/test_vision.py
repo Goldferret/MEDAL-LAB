@@ -4,11 +4,17 @@ import os
 import sys
 sys.path.insert(0, '.')
 
-from madsci.client import WorkcellClient, DataClient
+from madsci.client import WorkcellClient, DataClient, ExperimentClient
+from madsci.common.types.experiment_types import ExperimentDesign
 from helpers.block_permutations.workflows import create_scan_workflow
 from helpers.vision import detect_blocks
 
+# Mac-only solution
+from dotenv import load_dotenv
+load_dotenv('../../.env.global')
+
 # Get service URLs
+EXPERIMENT_URL = os.getenv("EXPERIMENT_SERVER_URL", "http://localhost:8002")
 WORKCELL_URL = os.getenv("WORKCELL_SERVER_URL", "http://localhost:8005")
 DATA_URL = os.getenv("DATA_SERVER_URL", "http://localhost:8004")
 
@@ -19,6 +25,21 @@ print("Step 1: Initializing clients...")
 workcell_client = WorkcellClient(WORKCELL_URL)
 data_client = DataClient(DATA_URL)
 print("✓ Clients initialized\n")
+
+# Step 1.5: Create and start experiment
+print("Step 1.5: Creating and starting experiment...")
+experiment_design = ExperimentDesign(
+    experiment_name="Vision Test Experiment",
+    experiment_description="Test camera capture and image storage"
+)
+
+experiment_client = ExperimentClient(EXPERIMENT_URL)
+experiment = experiment_client.start_experiment(
+    experiment_design=experiment_design,
+    run_name="Vision Test Run",
+    run_description="Single image capture test"
+)
+print(f"[OK] Experiment started: {experiment.experiment_id}\n")
 
 # Step 2: Run scan workflow (move to home + capture)
 print("Step 2: Running scan workflow...")
@@ -72,4 +93,29 @@ print(f"  Q1 (top-right):    {colors[1]}")
 print(f"  Q2 (bottom-left):  {colors[2]}")
 print(f"  Q3 (bottom-right): {colors[3]}")
 
+# Step 4.5: Create experiment configuration snapshot
+print("\nStep 4.5: Creating experiment configuration snapshot...")
+from madsci.common.types.datapoint_types import ValueDataPoint
+
+snapshot_data = {
+    "experiment_data": {
+        "image_datapoint_ids": [image_id]
+    }
+}
+
+snapshot = ValueDataPoint(
+    label="experiment_configuration",
+    value=snapshot_data,
+    ownership_info={"experiment_id": experiment.experiment_id}
+)
+
+snapshot_result = data_client.submit_datapoint(snapshot)
+print(f"✓ Snapshot created: {snapshot_result.datapoint_id}\n")
+
+# Step 5: End experiment
+print("Step 5: Ending experiment...")
+experiment_client.end_experiment(experiment.experiment_id)
+print(f"[OK] Experiment ended: {experiment.experiment_id}\n")
+
 print("\n=== Test Complete ===")
+print(f"Experiment ID: {experiment.experiment_id}")

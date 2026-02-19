@@ -10,17 +10,12 @@ from madsci.common.types.node_types import RestNodeConfig
 class DofbotRosConfig(RestNodeConfig):
     """Configuration for ROS-based DOFBOT Pro Robot Node."""
     
-    # node_url is set at runtime from ROBOT_NODE_URL environment variable
-    # See __main__ block in dofbot_ros_node.py
-    
     node_definition: str = "nodes/default.node.yaml"
     """Path to node definition file."""
     
     # ========================================================================
     # MOVEIT PLANNING PARAMETERS
     # ========================================================================
-    # These parameters configure MoveIT's motion planning behavior
-    # Values from manufacturer's example (arm_test.py)
     
     allow_replanning: bool = True
     """Allow MoveIT to replan if initial plan fails."""
@@ -40,21 +35,49 @@ class DofbotRosConfig(RestNodeConfig):
     goal_tolerance: float = 0.01
     """Overall goal tolerance."""
     
-    max_velocity_scaling_factor: float = 3.0
+    max_velocity_scaling_factor: float = 0.4
     """Maximum velocity scaling (0.0-1.0, where 1.0 is full speed)."""
     
-    max_acceleration_scaling_factor: float = 3.0
+    max_acceleration_scaling_factor: float = 0.4
     """Maximum acceleration scaling (0.0-1.0, where 1.0 is full acceleration)."""
     
     # ========================================================================
     # ROBOT POSITIONS
     # ========================================================================
-    # Predefined joint positions for common robot poses
-    # Format: [joint1, joint2, joint3, joint4, joint5] in radians
     
-    home_position: list[float] = [0.0, 0.0, 0.0, 0.0, 0.0]
-    """Home position - all joints at zero."""
+    home_position: list[float] = [0.0, 0.9633, -1.5708, -1.5708, 0.0]
+    """Home/init position joint angles in radians."""
     
-    # Additional positions can be added as needed:
-    # scan_position: list[float] = [0.79, 0.79, -1.57, -1.57, 0.0]
-    # pickup_position: list[float] = [0.3, 0.3, -1.0, -1.0, 0.0]
+    # ========================================================================
+    # PICK AND PLACE PARAMETERS
+    # ========================================================================
+    
+    table_z: float = 0.003
+    """Table surface height in base_link frame (meters). Calibrated across workspace."""
+    
+    approach_height: float = 0.10
+    """Height above target to approach from (meters)."""
+    
+    lift_height: float = 0.08
+    """Height to lift to after grasping (meters)."""
+    
+    gripper_squeeze_cm: float = 1.0
+    """How much tighter than object width to close gripper (cm)."""
+    
+    min_object_width_cm: float = 2.0
+    """Minimum object width to accept (cm). Rejects cables/noise."""
+    
+    # Gripper calibration: linear fit from empirical measurements
+    # gap_cm = gripper_slope * grip_joint + gripper_intercept
+    gripper_slope: float = -3.9318
+    """Gripper calibration slope (cm per radian)."""
+    
+    gripper_intercept: float = 0.7795
+    """Gripper calibration intercept (cm)."""
+    
+    # ========================================================================
+    # CAMERA
+    # ========================================================================
+    
+    camera_intrinsics_path: str = "calibration/camera_intrinsics.json"
+    """Path to camera intrinsics JSON file (relative to working directory)."""

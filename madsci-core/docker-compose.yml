@@ -29,7 +29,7 @@ services:
     restart: unless-stopped
     network_mode: host
     volumes:
-      - ../.madsci/mongodb:/data/db
+      - mongodb_data:/data/db
 
   redis:
     container_name: redis
@@ -37,7 +37,7 @@ services:
     restart: unless-stopped
     network_mode: host
     volumes:
-      - ../.madsci/redis:/data
+      - redis_data:/data
     command: redis-server --appendonly yes --save 900 1 --save 300 10 --save 60 10000
 
   postgres:
@@ -50,7 +50,7 @@ services:
       - POSTGRES_PASSWORD=madsci
       - POSTGRES_DB=resources
     volumes:
-      - ../.madsci/postgres:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
 
   minio:
     container_name: minio
@@ -61,7 +61,7 @@ services:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
     volumes:
-      - ../.madsci/minio:/home/madsci/.madsci/minio
+      - minio_data:/home/madsci/.madsci/minio
     command: server /home/madsci/.madsci/minio --console-address ":${MINIO_CONSOLE_PORT}"
 
   # === MANAGERS ===
@@ -165,3 +165,10 @@ services:
     command: python -m madsci.squid.lab_server --name "MEDAL-LAB" --host ${LAB_HOST} --port ${LAB_SERVER_PORT}
     depends_on:
       - event_manager
+
+# Named volumes - Docker manages permissions, no virtiofs issues
+volumes:
+  mongodb_data:
+  redis_data:
+  postgres_data:
+  minio_data:

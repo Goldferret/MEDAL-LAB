@@ -196,20 +196,20 @@ ros-up:
 		exit 1; \
 	fi
 	@echo "$(GREEN)Starting ROS services with verified dependencies...$(NC)"
-	@echo "$(CYAN)[1/4] Starting MoveIt (this takes ~100 seconds)...$(NC)"
+	@echo "$(CYAN)[1/6] Starting MoveIt (this takes ~100 seconds)...$(NC)"
 	@tmux new-session -d -s ros_services -n moveit
-	@tmux send-keys -t ros_services:moveit 'roslaunch dofbot_pro_config demo.launch' C-m
+	@tmux send-keys -t ros_services:moveit 'roslaunch dofbot_pro_config demo.launch use_rviz:=false' C-m
 	@echo "$(YELLOW)Waiting for MoveIt to initialize (checking every 5 seconds)...$(NC)"
-	@bash -c 'for i in {1..30}; do \
+	@bash -c 'for i in {1..50}; do \
 		if timeout 2 rostopic list 2>/dev/null | grep -q "/move_group/goal"; then \
 			echo -e "\033[0;32m✓ MoveIt action server detected (after $$((i*5)) seconds)\033[0m"; \
 			break; \
 		fi; \
-		if [ $$i -eq 30 ]; then \
-			echo -e "\033[0;31mERROR: MoveIt failed to start after 150 seconds\033[0m"; \
+		if [ $$i -eq 50 ]; then \
+			echo -e "\033[0;31mERROR: MoveIt failed to start after 250 seconds\033[0m"; \
 			exit 1; \
 		fi; \
-		echo "  ... still waiting (attempt $$i/30)"; \
+		echo "  ... still waiting (attempt $$i/50)"; \
 		sleep 5; \
 	done'
 	@echo "$(YELLOW)Waiting for MoveIt to complete initialization...$(NC)"
@@ -219,19 +219,19 @@ ros-up:
 	else \
 		echo -e "\033[0;33m⚠ MoveIt started but status topic not responsive (continuing anyway)\033[0m"; \
 	fi'
-	@echo "$(CYAN)[2/4] Starting arm_driver...$(NC)"
+	@echo "$(CYAN)[2/6] Starting arm_driver...$(NC)"
 	@tmux new-window -t ros_services -n arm_driver
 	@tmux send-keys -t ros_services:arm_driver 'rosrun dofbot_pro_info arm_driver.py' C-m
 	@sleep 3
 	@echo "$(GREEN)✓ arm_driver started$(NC)"
-	@echo "$(CYAN)[3/4] Starting sim_bridge...$(NC)"
+	@echo "$(CYAN)[3/6] Starting sim_bridge...$(NC)"
 	@tmux new-window -t ros_services -n sim_bridge
 	@tmux send-keys -t ros_services:sim_bridge 'rosrun arm_moveit_demo SimulationToMachine.py' C-m
 	@sleep 3
 	@echo "$(GREEN)✓ sim_bridge started$(NC)"
-	@echo "$(CYAN)[4/4] Starting camera...$(NC)"
+	@echo "$(CYAN)[4/6] Starting camera...$(NC)"
 	@tmux new-window -t ros_services -n camera
-	@tmux send-keys -t ros_services:camera 'roslaunch orbbec_camera dabai_dcw2.launch' C-m
+	@tmux send-keys -t ros_services:camera 'roslaunch orbbec_camera dabai_dcw2.launch enable_color_auto_exposure:=true' C-m
 	@sleep 8
 	@echo "$(YELLOW)Verifying camera stream...$(NC)"
 	@bash -c 'if timeout 10 rostopic list 2>/dev/null | grep -q "/camera/color/image_raw"; then \
@@ -243,6 +243,24 @@ ros-up:
 		fi; \
 	else \
 		echo -e "\033[0;33m⚠ Camera topic not found (launch may have failed)\033[0m"; \
+	fi'
+	@echo "$(CYAN)[5/6] Starting kinematics service...$(NC)"
+	@tmux new-window -t ros_services -n kinematics
+	@tmux send-keys -t ros_services:kinematics 'rosrun dofbot_pro_info kinemarics_dofbot_pro' C-m
+	@sleep 3
+	@bash -c 'if timeout 5 rosservice list | grep -q "get_kinemarics"; then \
+		echo -e "\033[0;32m✓ Kinematics service registered\033[0m"; \
+	else \
+		echo -e "\033[0;31m✗ Kinematics service failed to register\033[0m"; \
+	fi'
+	@echo "$(CYAN)[6/6] Publishing camera calibration TF...$(NC)"
+	@tmux new-window -t ros_services -n camera_tf
+	@tmux send-keys -t ros_services:camera_tf 'source ~/.bashrc && source ~/medal-lab/.env.global && rosrun tf static_transform_publisher $$CAMERA_TRANSFORM_X $$CAMERA_TRANSFORM_Y $$CAMERA_TRANSFORM_Z $$CAMERA_TRANSFORM_QX $$CAMERA_TRANSFORM_QY $$CAMERA_TRANSFORM_QZ $$CAMERA_TRANSFORM_QW base_link camera_color_optical_frame 100' C-m
+	@sleep 2
+	@bash -c 'if timeout 5 rostopic echo -n 1 /tf_static >/dev/null 2>&1; then \
+		echo -e "\033[0;32m✓ Camera TF transform published\033[0m"; \
+	else \
+		echo -e "\033[0;33m⚠ TF static topic not detected (may need more time)\033[0m"; \
 	fi'
 	@echo ""
 	@echo "$(GREEN)════════════════════════════════════════════════════════$(NC)"

@@ -19,6 +19,7 @@ This separation keeps hardware drivers on the host while providing a clean MADSc
 - ROS Noetic installed on host
 - DOFBOT Pro ROS packages (MoveIT, arm_driver)
 - Docker and Docker Compose (V2)
+- **Camera calibration completed** (see [tools/CALIBRATION.md](tools/CALIBRATION.md))
 
 ### Installing Docker Compose V2 on Jetson
 
@@ -49,7 +50,7 @@ make ros-status  # Check ROS service status
 
 **tmux commands while attached:**
 - `Ctrl+b` then `d` - Detach (services keep running)
-- `Ctrl+b` then `0-3` - Switch to window (0=moveit, 1=arm_driver, 2=sim_bridge, 3=camera)
+- `Ctrl+b` then `0-5` - Switch to window (0=moveit, 1=arm_driver, 2=sim_bridge, 3=camera, 4=kinematics, 5=camera_tf)
 - `Ctrl+b` then `n` - Next window
 - `Ctrl+b` then `p` - Previous window
 

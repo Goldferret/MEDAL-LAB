@@ -2,17 +2,34 @@
 ROS/MoveIT Interface for DOFBOT Pro
 
 Handles ROS communication and MoveIT motion planning for the DOFBOT Pro robot.
-Uses action client interface to communicate with host's move_group server.
+Uses MoveIT service calls (/compute_ik, /plan_kinematic_path) and action client
+for trajectory execution. This avoids moveit_commander C++ bindings which
+segfault in Docker/conda environments.
 """
 
 from typing import Optional
+import json
 import threading
+import numpy as np
 import rospy
 import actionlib
-from moveit_msgs.msg import MoveGroupAction, MoveGroupGoal, Constraints, JointConstraint
-from sensor_msgs.msg import JointState
+import tf2_ros
+import tf2_geometry_msgs  # noqa: F401 — registers PointStamped transform
+from moveit_msgs.msg import (
+    MoveGroupAction, MoveGroupGoal, Constraints, JointConstraint,
+    PositionIKRequest,
+)
+from moveit_msgs.srv import GetPositionIK, GetMotionPlan
+from geometry_msgs.msg import PoseStamped, PointStamped
+from sensor_msgs.msg import JointState, Image
 from madsci.client.event_client import EventClient
 from dofbot_ros_config import DofbotRosConfig
+
+ARM_JOINT_NAMES = ['Arm1_Joint', 'Arm2_Joint', 'Arm3_Joint', 'Arm4_Joint', 'Arm5_Joint']
+EEF_LINK = 'Gripping_point_Link'
+PLANNING_GROUP = 'arm_group'
+GRIPPER_GROUP = 'grip_group'
+DEPTH_SAMPLE_RADIUS = 3
 
 
 class DofbotRosInterface:
@@ -23,215 +40,265 @@ class DofbotRosInterface:
         config: DofbotRosConfig,
         logger: Optional[EventClient] = None
     ) -> None:
-        """
-        Initialize ROS node and MoveIT action client.
-        
-        Args:
-            config: Configuration with MoveIT parameters
-            logger: Event logger for status messages
-        """
         self.config = config
         self.logger = logger or EventClient()
         
-        # Initialize ROS node (disable_signals=True because we're in a thread)
+        # Initialize ROS node
         rospy.init_node("dofbot_madsci_node", anonymous=True, disable_signals=True)
         self.logger.log("ROS node initialized")
         
-        # Create action client for move_group
+        # Load camera intrinsics
+        with open(config.camera_intrinsics_path) as f:
+            calib = json.load(f)
+        self.fx = calib['camera_matrix'][0][0]
+        self.fy = calib['camera_matrix'][1][1]
+        self.cx = calib['camera_matrix'][0][2]
+        self.cy = calib['camera_matrix'][1][2]
+        self.logger.log(f"Camera intrinsics: fx={self.fx:.2f}, fy={self.fy:.2f}, cx={self.cx:.2f}, cy={self.cy:.2f}")
+        
+        # Action client for move_group (arm + gripper)
         self.move_client = actionlib.SimpleActionClient('/move_group', MoveGroupAction)
         self.logger.log("Waiting for move_group action server...")
         self.move_client.wait_for_server()
         self.logger.log("Connected to move_group action server")
         
-        # Create separate action client for gripper
         self.gripper_client = actionlib.SimpleActionClient('/move_group', MoveGroupAction)
-        self.logger.log("Gripper action client initialized")
-        self.logger.log("MoveIT action client initialized and configured")
         
-        # Subscribe to joint states for current position
+        # MoveIT service proxies for IK and planning
+        self.logger.log("Waiting for MoveIT services...")
+        rospy.wait_for_service('/compute_ik', timeout=10.0)
+        rospy.wait_for_service('/plan_kinematic_path', timeout=10.0)
+        self.ik_service = rospy.ServiceProxy('/compute_ik', GetPositionIK)
+        self.plan_service = rospy.ServiceProxy('/plan_kinematic_path', GetMotionPlan)
+        self.logger.log("MoveIT services connected")
+        
+        # TF buffer for camera→base_link transforms
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+        self.logger.log("TF listener initialized")
+        
+        # Joint state subscriber
         self.current_joint_state = None
         self.joint_state_sub = rospy.Subscriber(
-            '/joint_states',
-            JointState,
-            self._joint_state_callback
+            '/joint_states', JointState, self._joint_state_callback
         )
         
-        # Start background thread to process ROS callbacks
+        # Background ROS spinner
         self.spinner = threading.Thread(target=rospy.spin, daemon=True)
         self.spinner.start()
         
-        # Wait for first joint state message
-        rospy.sleep(0.5)
-        self.logger.log("MoveIT action client initialized and configured")
+        rospy.sleep(1.0)  # Wait for TF and joint states
+        self.logger.log("DOFBOT ROS interface ready")
     
     def _joint_state_callback(self, msg: JointState) -> None:
-        """Store latest joint state."""
         self.current_joint_state = msg
     
-    def move_to_joints(self, joint_positions: list[float]) -> bool:
+    # ========================================================================
+    # DEPROJECTION & TF
+    # ========================================================================
+    
+    def deproject_and_transform(self, pixel_x: int, pixel_y: int, depth_mm: int) -> Optional[tuple]:
         """
-        Move robot to specified joint positions using MoveIT.
+        Deproject pixel + depth to base_link frame.
         
         Args:
-            joint_positions: List of 5 joint angles in radians
+            pixel_x, pixel_y: Pixel coordinates in color image
+            depth_mm: Depth value in millimeters
             
         Returns:
-            True if movement successful, False otherwise
+            (x, y, z) in base_link frame, or None on failure.
         """
+        depth_m = depth_mm / 1000.0
+        if depth_m <= 0:
+            self.logger.log_error(f"Invalid depth: {depth_mm}mm")
+            return None
+        
+        # Deproject pixel → camera frame
+        cam_x = (pixel_x - self.cx) * depth_m / self.fx
+        cam_y = (pixel_y - self.cy) * depth_m / self.fy
+        cam_z = depth_m
+        
+        # TF transform camera → base_link
         try:
-            # Create goal message
+            point = PointStamped()
+            point.header.frame_id = 'camera_color_optical_frame'
+            point.header.stamp = rospy.Time(0)
+            point.point.x = cam_x
+            point.point.y = cam_y
+            point.point.z = cam_z
+            
+            transformed = self.tf_buffer.transform(point, 'base_link', rospy.Duration(2.0))
+            bx = transformed.point.x
+            by = transformed.point.y
+            bz = transformed.point.z
+            self.logger.log(f"Deproject+TF: pixel({pixel_x},{pixel_y}) depth={depth_mm}mm → base({bx:.3f},{by:.3f},{bz:.3f})")
+            return (bx, by, bz)
+            
+        except Exception as e:
+            self.logger.log_error(f"TF transform failed: {e}")
+            return None
+    
+    def pixel_width_to_meters(self, width_px: float, depth_mm: int) -> float:
+        """Convert pixel width to meters using depth and camera intrinsics."""
+        return width_px * (depth_mm / 1000.0) / self.fx
+    
+    # ========================================================================
+    # CORE MOTION
+    # ========================================================================
+    
+    def move_to_joints(self, joint_positions: list[float]) -> bool:
+        """Move arm to joint positions via MoveGroupAction."""
+        try:
             goal = MoveGroupGoal()
-            
-            # Set planning group
-            goal.request.group_name = "arm_group"
-            
-            # Set planning parameters
+            goal.request.group_name = PLANNING_GROUP
             goal.request.num_planning_attempts = self.config.num_planning_attempts
             goal.request.allowed_planning_time = self.config.planning_time
             goal.request.max_velocity_scaling_factor = self.config.max_velocity_scaling_factor
             goal.request.max_acceleration_scaling_factor = self.config.max_acceleration_scaling_factor
             
-            # Create joint constraints for goal
             constraints = Constraints()
-            joint_names = ['Arm1_Joint', 'Arm2_Joint', 'Arm3_Joint', 'Arm4_Joint', 'Arm5_Joint']
-            
-            for i, (name, position) in enumerate(zip(joint_names, joint_positions)):
-                constraint = JointConstraint()
-                constraint.joint_name = name
-                constraint.position = position
-                constraint.tolerance_above = self.config.goal_tolerance
-                constraint.tolerance_below = self.config.goal_tolerance
-                constraint.weight = 1.0
-                constraints.joint_constraints.append(constraint)
+            for name, position in zip(ARM_JOINT_NAMES, joint_positions):
+                jc = JointConstraint()
+                jc.joint_name = name
+                jc.position = position
+                jc.tolerance_above = self.config.goal_tolerance
+                jc.tolerance_below = self.config.goal_tolerance
+                jc.weight = 1.0
+                constraints.joint_constraints.append(jc)
             
             goal.request.goal_constraints.append(constraints)
+            goal.planning_options.plan_only = False
             
-            # Set planning options
-            goal.planning_options.plan_only = False  # Plan and execute
-            
-            # Send goal and wait for result
-            self.logger.log(f"Sending movement goal to {joint_positions}")
             self.move_client.send_goal(goal)
-            
-            # Wait for result with timeout
             finished = self.move_client.wait_for_result(rospy.Duration(30.0))
             
             if not finished:
-                self.logger.log_error("Movement timed out after 30 seconds")
+                self.logger.log_error("Movement timed out")
                 return False
             
-            # Check result
-            result = self.move_client.get_result()
-            state = self.move_client.get_state()
-            
-            if state == actionlib.GoalStatus.SUCCEEDED:
-                self.logger.log("Movement completed successfully")
-                return True
-            else:
-                self.logger.log_error(f"Movement failed with state: {state}")
-                return False
+            return self.move_client.get_state() == actionlib.GoalStatus.SUCCEEDED
             
         except Exception as e:
-            self.logger.log_error(f"Movement failed: {str(e)}")
+            self.logger.log_error(f"move_to_joints failed: {e}")
             return False
     
-    def get_current_joints(self) -> list[float]:
+    def move_to_pose(self, x: float, y: float, z: float,
+                     qx: float = 0.0, qy: float = 0.0,
+                     qz: float = 0.0, qw: float = 1.0) -> bool:
         """
-        Get current joint positions.
+        Move end effector to Cartesian pose in base_link frame.
+        Uses /compute_ik → /plan_kinematic_path → execute.
+        """
+        # Step 1: IK
+        ik_req = PositionIKRequest()
+        ik_req.group_name = PLANNING_GROUP
+        ik_req.avoid_collisions = True
+        pose = PoseStamped()
+        pose.header.frame_id = 'base_link'
+        pose.pose.position.x = x
+        pose.pose.position.y = y
+        pose.pose.position.z = z
+        pose.pose.orientation.x = qx
+        pose.pose.orientation.y = qy
+        pose.pose.orientation.z = qz
+        pose.pose.orientation.w = qw
+        ik_req.pose_stamped = pose
         
-        Returns:
-            List of 5 current joint angles in radians
-        """
         try:
-            if self.current_joint_state is None:
-                self.logger.log_error("No joint state received yet")
-                return []
-            
-            # Extract arm joint positions (first 5 joints)
-            return list(self.current_joint_state.position[:5])
-            
-        except Exception as e:
-            self.logger.log_error(f"Failed to get joint values: {str(e)}")
-            return []
+            ik_resp = self.ik_service(ik_req)
+        except rospy.ServiceException as e:
+            self.logger.log_error(f"IK service call failed: {e}")
+            return False
+        
+        if ik_resp.error_code.val != 1:
+            self.logger.log_error(f"IK failed (code {ik_resp.error_code.val}) for pose ({x:.3f}, {y:.3f}, {z:.3f})")
+            return False
+        
+        # Extract arm joints from IK solution
+        joint_map = dict(zip(ik_resp.solution.joint_state.name,
+                             ik_resp.solution.joint_state.position))
+        joint_positions = [joint_map[name] for name in ARM_JOINT_NAMES]
+        
+        self.logger.log(f"IK solved for ({x:.3f}, {y:.3f}, {z:.3f}) → joints {[round(j,3) for j in joint_positions]}")
+        return self.move_to_joints(joint_positions)
     
-    def move_gripper(self, gripper_positions: list[float]) -> bool:
-        """
-        Move gripper to specified positions using MoveIT.
+    # ========================================================================
+    # GRIPPER
+    # ========================================================================
+    
+    def move_gripper(self, grip_joint: float) -> bool:
+        """Move gripper to specified joint position. Clamped to [-1.5, 0.0]."""
+        grip_joint = max(-1.5, min(0.0, grip_joint))
         
-        Args:
-            gripper_positions: List of 3 gripper joint angles in radians
-            
-        Returns:
-            True if movement successful, False otherwise
-        """
         try:
-            # Create goal message
             goal = MoveGroupGoal()
-            
-            # Set planning group for gripper
-            goal.request.group_name = "grip_group"
-            
-            # Set planning parameters
+            goal.request.group_name = GRIPPER_GROUP
             goal.request.num_planning_attempts = self.config.num_planning_attempts
             goal.request.allowed_planning_time = self.config.planning_time
             goal.request.max_velocity_scaling_factor = self.config.max_velocity_scaling_factor
             goal.request.max_acceleration_scaling_factor = self.config.max_acceleration_scaling_factor
             
-            # Create joint constraints for gripper
             constraints = Constraints()
-            # Only control the main grip_joint, others are mechanically linked
-            constraint = JointConstraint()
-            constraint.joint_name = 'grip_joint'
-            constraint.position = gripper_positions[0]  # Use first value for grip_joint
-            constraint.tolerance_above = self.config.goal_tolerance
-            constraint.tolerance_below = self.config.goal_tolerance
-            constraint.weight = 1.0
-            constraints.joint_constraints.append(constraint)
+            jc = JointConstraint()
+            jc.joint_name = 'grip_joint'
+            jc.position = grip_joint
+            jc.tolerance_above = self.config.goal_tolerance
+            jc.tolerance_below = self.config.goal_tolerance
+            jc.weight = 1.0
+            constraints.joint_constraints.append(jc)
             
             goal.request.goal_constraints.append(constraints)
+            goal.planning_options.plan_only = False
             
-            # Set planning options
-            goal.planning_options.plan_only = False  # Plan and execute
-            
-            # Send goal and wait for result
-            self.logger.log(f"Sending gripper goal to {gripper_positions}")
             self.gripper_client.send_goal(goal)
-            
-            # Wait for result with timeout
             finished = self.gripper_client.wait_for_result(rospy.Duration(10.0))
             
             if not finished:
-                self.logger.log_error("Gripper movement timed out after 10 seconds")
+                self.logger.log_error("Gripper timed out")
                 return False
             
-            # Check result
-            state = self.gripper_client.get_state()
-            
-            if state == actionlib.GoalStatus.SUCCEEDED:
-                self.logger.log("Gripper movement completed successfully")
-                return True
-            else:
-                self.logger.log_error(f"Gripper movement failed with state: {state}")
-                return False
+            return self.gripper_client.get_state() == actionlib.GoalStatus.SUCCEEDED
             
         except Exception as e:
-            self.logger.log_error(f"Gripper movement failed: {str(e)}")
+            self.logger.log_error(f"Gripper failed: {e}")
             return False
     
+    def grip_for_width(self, width_m: float) -> bool:
+        """Close gripper to match object width with squeeze margin."""
+        width_cm = width_m * 100.0
+        target_gap_cm = width_cm - self.config.gripper_squeeze_cm
+        grip_joint = (target_gap_cm - self.config.gripper_intercept) / self.config.gripper_slope
+        grip_joint = max(-1.5, min(0.0, grip_joint))
+        self.logger.log(f"Gripping: width={width_cm:.1f}cm, gap={target_gap_cm:.1f}cm, joint={grip_joint:.3f}rad")
+        return self.move_gripper(grip_joint)
+    
+    def open_gripper(self) -> bool:
+        return self.move_gripper(-1.5)
+    
+    # ========================================================================
+    # CAMERA
+    # ========================================================================
+    
+    def get_current_joints(self) -> list[float]:
+        if self.current_joint_state is None:
+            return []
+        return list(self.current_joint_state.position[:5])
+    
     def capture_camera_image(self):
-        """
-        Capture image from ROS camera topic.
-        
-        Returns:
-            numpy array in BGR format, or None on failure
-        """
-        import rospy
-        from sensor_msgs.msg import Image
+        """Capture color image. Returns numpy BGR array or None."""
         from rosbags.image import message_to_cvimage
-        
         try:
-            img_msg = rospy.wait_for_message('/camera/color/image_raw', Image, timeout=5.0)
-            return message_to_cvimage(img_msg, 'bgr8')
+            msg = rospy.wait_for_message('/camera/color/image_raw', Image, timeout=5.0)
+            return message_to_cvimage(msg, 'bgr8')
         except Exception as e:
-            self.logger.log_error(f"Camera capture failed: {str(e)}")
+            self.logger.log_error(f"Color capture failed: {e}")
+            return None
+    
+    def capture_depth_image(self):
+        """Capture depth image. Returns numpy uint16 array (mm) or None."""
+        try:
+            msg = rospy.wait_for_message('/camera/depth/image_raw', Image, timeout=5.0)
+            return np.frombuffer(msg.data, dtype=np.uint16).reshape(msg.height, msg.width)
+        except Exception as e:
+            self.logger.log_error(f"Depth capture failed: {e}")
             return None

@@ -1,0 +1,735 @@
+{
+  "collection_date": "2026-02-13T04:07:05.872747",
+  "num_poses": 26,
+  "note": "joint_positions are in radians for MoveIt compatibility",
+  "poses": [
+    {
+      "pose_number": 1,
+      "timestamp": "2026-02-13T03:52:50.029606",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        -0.03490658503988659,
+        -1.5009831567151235,
+        0.017453292519943295,
+        -0.06981317007977318,
+        -0.017453292519943295,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        88,
+        4,
+        91,
+        86,
+        89,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 2,
+      "timestamp": "2026-02-13T03:52:58.629021",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        -0.03490658503988659,
+        -1.5009831567151235,
+        0.017453292519943295,
+        -0.7155849933176751,
+        -0.017453292519943295,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        88,
+        4,
+        91,
+        49,
+        89,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 3,
+      "timestamp": "2026-02-13T03:53:13.141331",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        -0.03490658503988659,
+        -1.5009831567151235,
+        0.017453292519943295,
+        0.5934119456780721,
+        -0.017453292519943295,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        88,
+        4,
+        91,
+        124,
+        89,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 4,
+      "timestamp": "2026-02-13T03:56:22.547744",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        -0.7853981633974483,
+        -1.5009831567151235,
+        0.017453292519943295,
+        0.20943951023931956,
+        -0.8726646259971648,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        45,
+        4,
+        91,
+        102,
+        40,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 5,
+      "timestamp": "2026-02-13T03:56:39.100926",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        -0.5410520681182421,
+        -1.5009831567151235,
+        0.017453292519943295,
+        -0.5410520681182421,
+        0.4886921905584123,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        59,
+        4,
+        91,
+        59,
+        118,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 6,
+      "timestamp": "2026-02-13T03:57:01.630678",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        0.7504915783575618,
+        -1.4311699866353502,
+        0.017453292519943295,
+        -0.6806784082777885,
+        -0.5061454830783556,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        133,
+        8,
+        91,
+        51,
+        61,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 7,
+      "timestamp": "2026-02-13T03:57:23.594600",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        0.4188790204786391,
+        -1.2915436464758039,
+        0.017453292519943295,
+        -0.8377580409572782,
+        0.7330382858376184,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        114,
+        16,
+        91,
+        42,
+        132,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 8,
+      "timestamp": "2026-02-13T03:57:47.607294",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        0.4537856055185257,
+        -0.9424777960769379,
+        -0.4886921905584123,
+        -0.17453292519943295,
+        -0.6981317007977318,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        116,
+        36,
+        62,
+        80,
+        50,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 9,
+      "timestamp": "2026-02-13T03:58:10.134742",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        0.3490658503988659,
+        -0.10471975511965978,
+        -0.5934119456780721,
+        -0.6806784082777885,
+        0.4014257279586958,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        110,
+        84,
+        56,
+        51,
+        113,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 10,
+      "timestamp": "2026-02-13T03:58:46.125267",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        -0.767944870877505,
+        -0.5235987755982988,
+        -1.4486232791552935,
+        0.24434609527920614,
+        -0.6108652381980153,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        46,
+        60,
+        7,
+        104,
+        55,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 11,
+      "timestamp": "2026-02-13T03:59:27.868538",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        -0.5410520681182421,
+        -0.29670597283903605,
+        -0.13962634015954636,
+        -0.6632251157578453,
+        0.2617993877991494,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        59,
+        73,
+        82,
+        52,
+        105,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 12,
+      "timestamp": "2026-02-13T03:59:59.425761",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        -1.5707963267948966,
+        -0.6632251157578453,
+        -0.4886921905584123,
+        -1.2042771838760873,
+        -0.6283185307179586,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        0,
+        52,
+        62,
+        21,
+        54,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 13,
+      "timestamp": "2026-02-13T04:00:37.616405",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        -1.5707963267948966,
+        -1.2217304763960306,
+        -1.5707963267948966,
+        1.0471975511965976,
+        -0.6981317007977318,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        0,
+        20,
+        0,
+        150,
+        50,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 14,
+      "timestamp": "2026-02-13T04:01:21.746897",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        -0.9599310885968813,
+        0.4188790204786391,
+        -1.5707963267948966,
+        0.8028514559173916,
+        -0.7853981633974483,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        35,
+        114,
+        0,
+        136,
+        45,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 15,
+      "timestamp": "2026-02-13T04:01:48.232907",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        -1.5707963267948966,
+        1.5707963267948966,
+        -1.5707963267948966,
+        -1.5533430342749532,
+        0.6806784082777885,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        0,
+        180,
+        0,
+        1,
+        129,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 16,
+      "timestamp": "2026-02-13T04:03:04.586659",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        -1.0995574287564276,
+        0.47123889803846897,
+        -1.3788101090755203,
+        -1.5009831567151235,
+        -0.5410520681182421,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        27,
+        117,
+        11,
+        4,
+        59,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 17,
+      "timestamp": "2026-02-13T04:03:22.429455",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        1.5533430342749532,
+        1.5707963267948966,
+        -1.361356816555577,
+        -1.5707963267948966,
+        -0.5759586531581288,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        179,
+        180,
+        12,
+        0,
+        57,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 18,
+      "timestamp": "2026-02-13T04:03:40.940686",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        1.5533430342749532,
+        -0.10471975511965978,
+        -1.361356816555577,
+        -0.8028514559173916,
+        0.6108652381980153,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        179,
+        84,
+        12,
+        44,
+        125,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 19,
+      "timestamp": "2026-02-13T04:04:19.714590",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        1.5533430342749532,
+        -1.3264502315156905,
+        -1.361356816555577,
+        1.0122909661567112,
+        0.05235987755982989,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        179,
+        14,
+        12,
+        148,
+        93,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 20,
+      "timestamp": "2026-02-13T04:04:49.392524",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        1.2915436464758039,
+        -0.12217304763960307,
+        -1.361356816555577,
+        -0.6283185307179586,
+        -0.33161255787892263,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        164,
+        83,
+        12,
+        54,
+        71,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 21,
+      "timestamp": "2026-02-13T04:05:11.407408",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        1.2566370614359172,
+        -0.20943951023931956,
+        -0.03490658503988659,
+        -0.7853981633974483,
+        0.6632251157578453,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        162,
+        78,
+        88,
+        45,
+        128,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 22,
+      "timestamp": "2026-02-13T04:05:30.621982",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        0.03490658503988659,
+        -0.03490658503988659,
+        -0.03490658503988659,
+        -0.6457718232379019,
+        0.10471975511965978,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        92,
+        88,
+        88,
+        53,
+        96,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 23,
+      "timestamp": "2026-02-13T04:05:44.464097",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        0.8901179185171081,
+        -0.5235987755982988,
+        -0.03490658503988659,
+        -1.5533430342749532,
+        -0.4886921905584123,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        141,
+        60,
+        88,
+        1,
+        62,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 24,
+      "timestamp": "2026-02-13T04:06:36.378437",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        0.017453292519943295,
+        -0.3141592653589793,
+        -1.1868238913561442,
+        -1.0471975511965976,
+        0.4014257279586958,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        91,
+        72,
+        22,
+        30,
+        113,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 25,
+      "timestamp": "2026-02-13T04:06:50.101396",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        0.22689280275926285,
+        -0.8028514559173916,
+        -1.1868238913561442,
+        -0.10471975511965978,
+        -0.5235987755982988,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        103,
+        44,
+        22,
+        84,
+        60,
+        87.6
+      ]
+    },
+    {
+      "pose_number": 26,
+      "timestamp": "2026-02-13T04:06:58.576371",
+      "joint_names": [
+        "Arm1_Joint",
+        "Arm2_Joint",
+        "Arm3_Joint",
+        "Arm4_Joint",
+        "Arm5_Joint",
+        "grip_joint"
+      ],
+      "joint_positions": [
+        -0.5410520681182421,
+        -0.8028514559173916,
+        -1.1868238913561442,
+        -0.10471975511965978,
+        0.5235987755982988,
+        -0.04188790204786401
+      ],
+      "servo_values_degrees": [
+        59,
+        44,
+        22,
+        84,
+        120,
+        87.6
+      ]
+    }
+  ]
+}

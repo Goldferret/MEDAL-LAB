@@ -87,7 +87,7 @@ make ros-status  # Check ROS service status
 
 **tmux commands while attached:**
 - `Ctrl+b` then `d` - Detach (services keep running)
-- `Ctrl+b` then `0-3` - Switch to window (0=moveit, 1=arm_driver, 2=sim_bridge, 3=camera)
+- `Ctrl+b` then `0-5` - Switch to window (0=moveit, 1=arm_driver, 2=sim_bridge, 3=camera, 4=kinematics, 5=camera_tf)
 - `Ctrl+b` then `n` - Next window
 - `Ctrl+b` then `p` - Previous window
 
@@ -133,6 +133,7 @@ See [clients/README.md](clients/README.md) for workflow and experiment developme
 
 ### Workflows and Tools
 - **[Workflows](clients/workflows/README.md)** - Available workflows and usage examples
+- **[Camera Calibration](robot-nodes/dofbot-pro-ros/tools/CALIBRATION.md)** - Overhead camera calibration guide
 - **[Diagnostic Tools](robot-nodes/dofbot-pro-archived/archived-tools/README.md)** - Camera calibration and hardware diagnostics
 
 ### External Resources

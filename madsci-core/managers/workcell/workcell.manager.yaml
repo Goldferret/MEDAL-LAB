@@ -4,7 +4,7 @@ manager_id: 01K904DW7MJPSYCQW0DA3CP85T
 description: MEDAL-LAB autonomous laboratory workcell with DOFBOT Pro robot arm and
   camera system
 nodes:
-  DOFBOT_Pro_1: http://192.168.1.77:2000/
+  DOFBOT_Pro_1: http://192.168.1.109:2000/
 config:
   host: 0.0.0.0
   port: 8005
@@ -19,8 +19,8 @@ config:
   clear_workflows: false
   cold_start_delay: 0
   scheduler: madsci.workcell_manager.schedulers.default_scheduler
-  data_server_url: http://192.168.1.73:8004/
-  resource_server_url: http://192.168.1.73:8003/
+  data_server_url: http://localhost:8004/
+  resource_server_url: http://localhost:8003/
   mongo_url: mongodb://localhost:27017
   get_action_result_retries: 3
 locations: []

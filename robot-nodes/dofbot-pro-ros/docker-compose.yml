@@ -15,7 +15,7 @@ services:
       - ../../.env.global
       - .env
     environment:
-      - PYTHONPATH=/opt/ros/noetic/lib/python3/dist-packages:$PYTHONPATH
+      - LD_LIBRARY_PATH=/opt/conda/envs/rosenv/lib
       - ROS_HOSTNAME=localhost
       - ROS_IP=
     volumes:
@@ -28,10 +28,13 @@ services:
       - /opt/ros/noetic/lib/python3/dist-packages/sensor_msgs:/opt/conda/envs/rosenv/lib/python3.9/site-packages/sensor_msgs:ro
       - /opt/ros/noetic/lib/python3/dist-packages/trajectory_msgs:/opt/conda/envs/rosenv/lib/python3.9/site-packages/trajectory_msgs:ro
       - /opt/ros/noetic/lib/python3/dist-packages/shape_msgs:/opt/conda/envs/rosenv/lib/python3.9/site-packages/shape_msgs:ro
+      - /opt/ros/noetic/lib/python3/dist-packages/object_recognition_msgs:/opt/conda/envs/rosenv/lib/python3.9/site-packages/object_recognition_msgs:ro
+      - /opt/ros/noetic/lib/python3/dist-packages/octomap_msgs:/opt/conda/envs/rosenv/lib/python3.9/site-packages/octomap_msgs:ro
+      - /home/jetson/dofbot_pro_ws/devel/lib/python3/dist-packages/dofbot_pro_info:/opt/conda/envs/rosenv/lib/python3.9/site-packages/dofbot_pro_info:ro
       
       # Application code
       - ./nodes:/home/madsci/nodes
-      - /opt/ros/noetic/lib/python3/dist-packages:/opt/ros/noetic/lib/python3/dist-packages:ro
+      - ./calibration:/home/madsci/calibration:ro
     stdin_open: true
     tty: true
     command: >

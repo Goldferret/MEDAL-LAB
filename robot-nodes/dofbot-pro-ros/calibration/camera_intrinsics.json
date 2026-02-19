@@ -1,0 +1,54 @@
+{
+  "camera_matrix": [
+    [
+      477.3402434548047,
+      0.0,
+      321.5317665000245
+    ],
+    [
+      0.0,
+      477.83759533485534,
+      240.12675078463585
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "distortion_coefficients": [
+    [
+      0.024527067468948182,
+      -0.15057796759705858,
+      -0.0002886747701363464,
+      0.00014052134375686909,
+      0.1506295619592906
+    ]
+  ],
+  "rms_error": 0.16211731466526044,
+  "image_size": [
+    640,
+    480
+  ],
+  "calibration_method": "charuco",
+  "board_parameters": {
+    "squares_x": 5,
+    "squares_y": 7,
+    "square_length_mm": 36,
+    "marker_length_mm": 27,
+    "dictionary": "DICT_4X4_50"
+  },
+  "quality_assessment": {
+    "rms_error_pixels": 0.16211731466526044,
+    "quality_rating": "EXCELLENT",
+    "focal_length_x": 477.3402434548047,
+    "focal_length_y": 477.83759533485534,
+    "principal_point_x": 321.5317665000245,
+    "principal_point_y": 240.12675078463585,
+    "distortion_k1": 0.024527067468948182,
+    "distortion_k2": -0.15057796759705858,
+    "distortion_p1": -0.0002886747701363464,
+    "distortion_p2": 0.00014052134375686909,
+    "distortion_k3": 0.1506295619592906
+  }
+}

@@ -13,6 +13,10 @@ import requests
 from pathlib import Path
 from madsci.client import ExperimentClient, DataClient
 
+# Mac-only solution
+from dotenv import load_dotenv
+load_dotenv('../../.env.global')
+
 # Configuration
 MAX_EXPERIMENTS = 3  # Number of recent experiments to show in list mode
 

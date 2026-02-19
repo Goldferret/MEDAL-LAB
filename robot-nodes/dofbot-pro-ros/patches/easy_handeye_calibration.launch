@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 
+    easy_handeye Eye-to-Hand Calibration Launch File
+    
+    Prerequisites:
+    - make ros-up (starts arm_driver, robot_state_publisher, move_group, camera, camera_tf)
+    - ArUco marker (ID 0, 70mm) mounted on robot end effector
+    
+    This launch file starts:
+    - ArUco marker detector (publishes camera_color_optical_frame -> aruco_marker_frame TF)
+    - easy_handeye calibration node (no GUI, use rosservice or sample_collector.py)
+    
+    Usage:
+    1. Launch: roslaunch dofbot_pro_config easy_handeye_calibration.launch
+    2. Run sample collector: python3 ~/medal-lab/robot-nodes/dofbot-pro-ros/tools/easy_handeye_sample_collector.py
+    3. Position robot with PS controller, press ENTER to capture samples
+    4. After 10-15 samples, type 'c' to compute, 's' to save
+  -->
+  
+  <!-- Start ArUco marker detector (publishes TF: camera_color_optical_frame → aruco_marker_frame) -->
+  <node pkg="dofbot_pro_config" type="aruco_marker_detector.py" name="aruco_marker_detector" output="screen">
+    <param name="marker_id" value="0"/>
+    <param name="marker_size" value="0.070"/>
+    <param name="camera_frame" value="camera_color_optical_frame"/>
+    <param name="marker_frame" value="aruco_marker_frame"/>
+  </node>
+
+  <!-- Start easy_handeye calibration -->
+  <include file="$(find easy_handeye)/launch/calibrate.launch">
+    <!-- Eye-to-hand: camera fixed to world, robot moves -->
+    <arg name="eye_on_hand" value="false"/>
+    
+    <!-- Namespace for services and saved calibration -->
+    <arg name="namespace_prefix" value="dofbot_eye_to_hand"/>
+    
+    <!-- Robot frames -->
+    <arg name="robot_base_frame" value="base_link"/>
+    <arg name="robot_effector_frame" value="Gripping_point_Link"/>
+    
+    <!-- Tracking system frames -->
+    <arg name="tracking_base_frame" value="camera_color_optical_frame"/>
+    <arg name="tracking_marker_frame" value="aruco_marker_frame"/>
+    
+    <!-- Manual movement via PlayStation controller -->
+    <arg name="freehand_robot_movement" value="true"/>
+    
+    <!-- No GUI - use rosservice or sample_collector.py script -->
+    <arg name="start_rviz" value="false"/>
+    <arg name="start_sampling_gui" value="false"/>
+    
+    <!-- CRITICAL: Disable dummy TF - we're computing the real transform! -->
+    <arg name="publish_dummy" value="false"/>
+  </include>
+</launch>

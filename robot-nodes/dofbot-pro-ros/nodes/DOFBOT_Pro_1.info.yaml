@@ -1,0 +1,370 @@
+node_name: DOFBOT_Pro_1
+node_id: 01K901ZPWBYHQH2HN9SS5M74C8
+node_description: ROS-based DOFBOT Pro robot arm with MoveIT integration
+node_type: device
+module_name: dofbot_ros_node
+module_version: 0.0.1
+capabilities:
+  get_info: true
+  get_state: true
+  get_status: true
+  send_action: true
+  get_action_status: true
+  get_action_result: true
+  get_action_history: true
+  action_files: true
+  send_admin_commands: true
+  set_config: true
+  get_resources: false
+  get_log: true
+  admin_commands:
+  - lock
+  - reset
+  - shutdown
+  - unlock
+node_url: null
+actions:
+  move_to_position:
+    name: move_to_position
+    description: "\n        Move robot to specified joint positions.\n        \n \
+      \       Args:\n            joint_positions: List of 5 joint angles in radians\n\
+      \            \n        Returns:\n            Dictionary with status and message\n\
+      \        "
+    args:
+      joint_positions:
+        name: joint_positions
+        description: ''
+        argument_type: list[float]
+        required: true
+        default: null
+    locations: {}
+    files: {}
+    results:
+      json_result:
+        result_label: json_result
+        description: null
+        result_type: json
+        json_schema:
+          properties:
+            data:
+              additionalProperties: true
+              title: Data
+              type: object
+          required:
+          - data
+          title: dictModel
+          type: object
+    blocking: false
+    asynchronous: true
+    accepts_var_args: false
+    accepts_var_kwargs: false
+    var_args_schema: null
+    var_kwargs_schema: null
+  get_current_position:
+    name: get_current_position
+    description: "\n        Get current robot joint positions.\n        \n       \
+      \ Returns:\n            Dictionary with current joint positions\n        "
+    args: {}
+    locations: {}
+    files: {}
+    results:
+      json_result:
+        result_label: json_result
+        description: null
+        result_type: json
+        json_schema:
+          properties:
+            data:
+              additionalProperties: true
+              title: Data
+              type: object
+          required:
+          - data
+          title: dictModel
+          type: object
+    blocking: false
+    asynchronous: true
+    accepts_var_args: false
+    accepts_var_kwargs: false
+    var_args_schema: null
+    var_kwargs_schema: null
+  home_robot:
+    name: home_robot
+    description: "\n        Move robot to home position.\n        \n        Returns:\n\
+      \            Dictionary with status and message\n        "
+    args: {}
+    locations: {}
+    files: {}
+    results:
+      json_result:
+        result_label: json_result
+        description: null
+        result_type: json
+        json_schema:
+          properties:
+            data:
+              additionalProperties: true
+              title: Data
+              type: object
+          required:
+          - data
+          title: dictModel
+          type: object
+    blocking: false
+    asynchronous: true
+    accepts_var_args: false
+    accepts_var_kwargs: false
+    var_args_schema: null
+    var_kwargs_schema: null
+  open_gripper:
+    name: open_gripper
+    description: "\n        Open the gripper to release objects.\n        \n     \
+      \   Returns:\n            Dictionary with status and message\n        "
+    args: {}
+    locations: {}
+    files: {}
+    results:
+      json_result:
+        result_label: json_result
+        description: null
+        result_type: json
+        json_schema:
+          properties:
+            data:
+              additionalProperties: true
+              title: Data
+              type: object
+          required:
+          - data
+          title: dictModel
+          type: object
+    blocking: false
+    asynchronous: true
+    accepts_var_args: false
+    accepts_var_kwargs: false
+    var_args_schema: null
+    var_kwargs_schema: null
+  close_gripper:
+    name: close_gripper
+    description: "\n        Close the gripper to grasp objects.\n        \n      \
+      \  Returns:\n            Dictionary with status and message\n        "
+    args: {}
+    locations: {}
+    files: {}
+    results:
+      json_result:
+        result_label: json_result
+        description: null
+        result_type: json
+        json_schema:
+          properties:
+            data:
+              additionalProperties: true
+              title: Data
+              type: object
+          required:
+          - data
+          title: dictModel
+          type: object
+    blocking: false
+    asynchronous: true
+    accepts_var_args: false
+    accepts_var_kwargs: false
+    var_args_schema: null
+    var_kwargs_schema: null
+  capture_camera_image:
+    name: capture_camera_image
+    description: "\n        Capture image from camera and return as datapoint.\n \
+      \       \n        Returns:\n            Dictionary with datapoint_id of captured\
+      \ image\n        "
+    args: {}
+    locations: {}
+    files: {}
+    results:
+      json_result:
+        result_label: json_result
+        description: null
+        result_type: json
+        json_schema:
+          properties:
+            data:
+              additionalProperties: true
+              title: Data
+              type: object
+          required:
+          - data
+          title: dictModel
+          type: object
+    blocking: false
+    asynchronous: true
+    accepts_var_args: false
+    accepts_var_kwargs: false
+    var_args_schema: null
+    var_kwargs_schema: null
+  swap_blocks:
+    name: swap_blocks
+    description: "\n        Swap blocks between two locations using temporary location.\n\
+      \        \n        Args:\n            location_a_id: First location ID\n   \
+      \         location_b_id: Second location ID\n            temp_location_id: Temporary\
+      \ holding location ID\n            \n        Returns:\n            Dictionary\
+      \ with status and message\n        "
+    args:
+      location_a_id:
+        name: location_a_id
+        description: ''
+        argument_type: str
+        required: true
+        default: null
+      location_b_id:
+        name: location_b_id
+        description: ''
+        argument_type: str
+        required: true
+        default: null
+      temp_location_id:
+        name: temp_location_id
+        description: ''
+        argument_type: str
+        required: true
+        default: null
+    locations: {}
+    files: {}
+    results:
+      json_result:
+        result_label: json_result
+        description: null
+        result_type: json
+        json_schema:
+          properties:
+            data:
+              additionalProperties: true
+              title: Data
+              type: object
+          required:
+          - data
+          title: dictModel
+          type: object
+    blocking: false
+    asynchronous: true
+    accepts_var_args: false
+    accepts_var_kwargs: false
+    var_args_schema: null
+    var_kwargs_schema: null
+config:
+  node_definition: nodes/default.node.yaml
+  node_info_path: null
+  update_node_files: true
+  status_update_interval: 2.0
+  state_update_interval: 2.0
+  node_url: http://192.168.40.252:2000/
+  uvicorn_kwargs: {}
+  allow_replanning: true
+  planning_time: 5.0
+  num_planning_attempts: 10
+  goal_position_tolerance: 0.01
+  goal_orientation_tolerance: 0.01
+  goal_tolerance: 0.01
+  max_velocity_scaling_factor: 3.0
+  max_acceleration_scaling_factor: 3.0
+  home_position:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+config_schema:
+  description: Configuration for ROS-based DOFBOT Pro Robot Node.
+  properties:
+    node_definition:
+      default: nodes/default.node.yaml
+      title: Node Definition
+      type: string
+    node_info_path:
+      anyOf:
+      - type: string
+      - format: path
+        type: string
+      - type: 'null'
+      default: null
+      description: Path to export the generated node info file. If not set, will use
+        the node name and the node_definition's path.
+      title: Node Info Path
+    update_node_files:
+      default: true
+      description: Whether to update the node definition and info files on startup.
+        If set to False, the node will not update the files even if they are out of
+        date.
+      title: Update Node Files
+      type: boolean
+    status_update_interval:
+      anyOf:
+      - type: number
+      - type: 'null'
+      default: 2.0
+      description: The interval in seconds at which the node should update its status.
+      title: Status Update Interval
+    state_update_interval:
+      anyOf:
+      - type: number
+      - type: 'null'
+      default: 2.0
+      description: The interval in seconds at which the node should update its state.
+      title: State Update Interval
+    node_url:
+      default: http://127.0.0.1:2000/
+      description: The URL used to communicate with the node. This is the base URL
+        for the REST API.
+      format: uri
+      minLength: 1
+      title: Node URL
+      type: string
+    uvicorn_kwargs:
+      additionalProperties: true
+      description: Configuration for the Uvicorn server that runs the REST API.
+      title: Uvicorn Configuration
+      type: object
+    allow_replanning:
+      default: true
+      title: Allow Replanning
+      type: boolean
+    planning_time:
+      default: 5.0
+      title: Planning Time
+      type: number
+    num_planning_attempts:
+      default: 10
+      title: Num Planning Attempts
+      type: integer
+    goal_position_tolerance:
+      default: 0.01
+      title: Goal Position Tolerance
+      type: number
+    goal_orientation_tolerance:
+      default: 0.01
+      title: Goal Orientation Tolerance
+      type: number
+    goal_tolerance:
+      default: 0.01
+      title: Goal Tolerance
+      type: number
+    max_velocity_scaling_factor:
+      default: 3.0
+      title: Max Velocity Scaling Factor
+      type: number
+    max_acceleration_scaling_factor:
+      default: 3.0
+      title: Max Acceleration Scaling Factor
+      type: number
+    home_position:
+      default:
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      items:
+        type: number
+      title: Home Position
+      type: array
+  title: DofbotRosConfig
+  type: object
